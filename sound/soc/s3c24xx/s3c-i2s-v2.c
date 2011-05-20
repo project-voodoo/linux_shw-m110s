@@ -31,7 +31,8 @@
 #include <sound/soc.h>
 
 #include <plat/regs-iis.h>
-
+#include <mach/map.h>
+#include <mach/regs-audss.h>
 #include <mach/dma.h>
 
 #include "s3c-i2s-v2.h"
@@ -53,6 +54,13 @@
 
 #define S3C2412_I2S_DEBUG_CON 0
 
+#ifdef CONFIG_SND_S5P_RP
+/* s5p_rp_is_running is from s5p_rp driver */
+extern volatile int s5p_rp_is_running;
+#endif
+
+extern int wm8994_flag_control(int on, int iscapture);
+extern int wm8994_ampcontrol_mixoutpwr(int on);
 extern int wm8994_ampcontrol_playback(int on);
 extern int wm8994_ampcontrol_record(int on);
 extern bool is_voip_incall_state;
@@ -67,7 +75,8 @@ static inline struct s3c_i2sv2_info *to_info(struct snd_soc_dai *cpu_dai)
 #if S3C2412_I2S_DEBUG_CON
 static void dbg_showcon(const char *fn, u32 con)
 {
-	printk(KERN_DEBUG "%s: LRI=%d, TXFEMPT=%d, RXFEMPT=%d, TXFFULL=%d, RXFFULL=%d\n", fn,
+	printk(KERN_DEBUG "%s: LRI=%d, TXFEMPT=%d, RXFEMPT=%d, TXFFULL=%d,\
+		RXFFULL=%d\n", fn,
 	       bit_set(con, S3C2412_IISCON_LRINDEX),
 	       bit_set(con, S3C2412_IISCON_TXFIFO_EMPTY),
 	       bit_set(con, S3C2412_IISCON_RXFIFO_EMPTY),
@@ -98,7 +107,7 @@ static void s3c2412_snd_txctrl(struct s3c_i2sv2_info *i2s, int on)
 	void __iomem *regs = i2s->regs;
 	u32 fic, con, mod;
 
-	printk(KERN_DEBUG " TxControl on:%d\n", on);
+	printk(KERN_DEBUG " TxCtrl %s\n", on?"On":"Off");
 
 	fic = readl(regs + S3C2412_IISFIC);
 	con = readl(regs + S3C2412_IISCON);
@@ -142,17 +151,36 @@ static void s3c2412_snd_txctrl(struct s3c_i2sv2_info *i2s, int on)
 			writel(con, regs + S3C2412_IISCON);
 			return;
 		}
+#ifdef CONFIG_SND_S5P_RP
+		if (!s5p_rp_is_running)			/* Check RP is running */
+			con |=  S3C2412_IISCON_TXCH_PAUSE;
+#else
 		con |=  S3C2412_IISCON_TXCH_PAUSE;
+#endif
 
 		switch (mod & S3C2412_IISMOD_MODE_MASK) {
 		case S3C2412_IISMOD_MODE_TXRX:
+#ifdef CONFIG_SND_S5P_RP
+			if (!s5p_rp_is_running) {	/* Check RP is running */
+				mod &= ~S3C2412_IISMOD_MODE_MASK;
+				mod |= S3C2412_IISMOD_MODE_RXONLY;
+			}
+#else
 			mod &= ~S3C2412_IISMOD_MODE_MASK;
 			mod |= S3C2412_IISMOD_MODE_RXONLY;
+#endif
 			break;
 
 		case S3C2412_IISMOD_MODE_TXONLY:
+#ifdef CONFIG_SND_S5P_RP
+			if (!s5p_rp_is_running) {	/* Check RP is running */
+				mod &= ~S3C2412_IISMOD_MODE_MASK;
+				con &= ~S3C2412_IISCON_IIS_ACTIVE;
+			}
+#else
 			mod &= ~S3C2412_IISMOD_MODE_MASK;
 			con &= ~S3C2412_IISCON_IIS_ACTIVE;
+#endif
 			break;
 
 		default:
@@ -175,7 +203,7 @@ static void s3c2412_snd_rxctrl(struct s3c_i2sv2_info *i2s, int on)
 	void __iomem *regs = i2s->regs;
 	u32 fic, con, mod;
 
-	printk(KERN_DEBUG " RxControl on:%d\n", on);
+	printk(KERN_DEBUG " RxCtrl %s\n", on?"On":"Off");
 
 	fic = readl(regs + S3C2412_IISFIC);
 	con = readl(regs + S3C2412_IISCON);
@@ -278,7 +306,7 @@ static int s3c2412_i2s_set_fmt(struct snd_soc_dai *cpu_dai,
 	pr_debug("Entered %s\n", __func__);
 
 	iismod = readl(i2s->regs + S3C2412_IISMOD);
-	pr_debug("hw_params r: IISMOD: %x \n", iismod);
+	pr_debug("hw_params r: IISMOD: %x\n", iismod);
 
 #if defined(CONFIG_CPU_S3C2412) || defined(CONFIG_CPU_S3C2413)
 #define IISMOD_MASTER_MASK S3C2412_IISMOD_MASTER_MASK
@@ -336,7 +364,7 @@ static int s3c2412_i2s_set_fmt(struct snd_soc_dai *cpu_dai,
 	}
 
 	writel(iismod, i2s->regs + S3C2412_IISMOD);
-	pr_debug("hw_params w: IISMOD: %x \n", iismod);
+	pr_debug("hw_params w: IISMOD: %x\n", iismod);
 	return 0;
 }
 
@@ -352,15 +380,17 @@ int s3c2412_i2s_hw_params(struct snd_pcm_substream *substream,
 	pr_debug("Entered %s\n", __func__);
 
 	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
-		dai->cpu_dai->dma_data = i2s->dma_playback;
+		snd_soc_dai_set_dma_data(rtd->dai->cpu_dai, substream,
+						i2s->dma_playback);
 	else
-		dai->cpu_dai->dma_data = i2s->dma_capture;
+		snd_soc_dai_set_dma_data(rtd->dai->cpu_dai, substream,
+						i2s->dma_capture);
 
 	/* Working copies of register */
 	iismod = readl(i2s->regs + S3C2412_IISMOD);
 	pr_debug("%s: r: IISMOD: %x\n", __func__, iismod);
 
-	switch(params_channels(params)){
+	switch (params_channels(params)) {
 	case 1:
 	    //printk("DMA 1 channel setting, stream [%d]\n", substream->stream);
 		if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
@@ -410,6 +440,13 @@ int s3c2412_i2s_hw_params(struct snd_pcm_substream *substream,
 	/* Set the IISMOD[25:24](BLC_P) to same value */
 	iismod &= ~(S5P_IISMOD_BLCPMASK);
 	iismod |= ((iismod & S3C64XX_IISMOD_BLC_MASK) << 11);
+
+#ifdef CONFIG_SND_S5P_RP
+	/* ULP Audio use secondary port */
+	/* Set the IISMOD[27:26](BLC_S) to same value */
+	iismod &= ~(S5P_IISMOD_BLCSMASK);
+	iismod |= ((iismod & S3C64XX_IISMOD_BLC_MASK) << 13);
+#endif
 #endif
 
 	writel(iismod, i2s->regs + S3C2412_IISMOD);
@@ -433,26 +470,28 @@ int s3c2412_i2s_trigger(struct snd_pcm_substream *substream, int cmd,
 	case SNDRV_PCM_TRIGGER_START:
 	case SNDRV_PCM_TRIGGER_RESUME:
 	case SNDRV_PCM_TRIGGER_PAUSE_RELEASE:
+#if 1 // test
+		s3c2412_snd_lrsync(i2s);
+#else
 		if (!i2s->master) {
 			ret = s3c2412_snd_lrsync(i2s);
 			if (ret)
 				goto exit_err;
 		}
-
+#endif
 		local_irq_save(irqs);
 
-		if (capture)
-		{
-			wm8994_ampcontrol_record(1);
-			if(is_voip_incall_state)
-			{
+		if (capture) {
+			//wm8994_flag_control(1, capture);
+			//wm8994_ampcontrol_record(1);
+			if(is_voip_incall_state) {
 				mdelay(75);
 			}
 			s3c2412_snd_rxctrl(i2s, 1);
-		}
-		else
-		{
-			wm8994_ampcontrol_playback(1);
+		} else {
+			//wm8994_flag_control(1, capture);
+			//wm8994_ampcontrol_playback(1);
+			wm8994_ampcontrol_mixoutpwr(1);
 			s3c2412_snd_txctrl(i2s, 1);
 		}
 
@@ -464,17 +503,16 @@ int s3c2412_i2s_trigger(struct snd_pcm_substream *substream, int cmd,
 	case SNDRV_PCM_TRIGGER_PAUSE_PUSH:
 		local_irq_save(irqs);
 
-		if (capture)
-		{
+		if (capture) {
 			s3c2412_snd_rxctrl(i2s, 0);
-			wm8994_ampcontrol_record(0);
-		}
-		else
-		{
+			//wm8994_flag_control(0, capture);
+			//wm8994_ampcontrol_record(0);
+		} else {
 			s3c2412_snd_txctrl(i2s, 0);
-			wm8994_ampcontrol_playback(0);
+			//wm8994_flag_control(0, capture);
+			//wm8994_ampcontrol_playback(0);
+			wm8994_ampcontrol_mixoutpwr(0);
 		}
-
 
 		local_irq_restore(irqs);
 		break;
@@ -530,7 +568,8 @@ static int s3c2412_i2s_set_clkdiv(struct snd_soc_dai *cpu_dai,
 		reg &= ~S3C2412_IISMOD_BCLK_MASK;
 		writel(reg | div, i2s->regs + S3C2412_IISMOD);
 
-		pr_debug("%s: MOD=%08x\n", __func__, readl(i2s->regs + S3C2412_IISMOD));
+		pr_debug("%s: MOD=%08x\n", __func__,
+				readl(i2s->regs + S3C2412_IISMOD));
 		break;
 
 	case S3C_I2SV2_DIV_RCLK:
@@ -562,7 +601,8 @@ static int s3c2412_i2s_set_clkdiv(struct snd_soc_dai *cpu_dai,
 		reg = readl(i2s->regs + S3C2412_IISMOD);
 		reg &= ~S3C2412_IISMOD_RCLK_MASK;
 		writel(reg | div, i2s->regs + S3C2412_IISMOD);
-		pr_debug("%s: MOD=%08x\n", __func__, readl(i2s->regs + S3C2412_IISMOD));
+		pr_debug("%s: MOD=%08x\n", __func__,
+				readl(i2s->regs + S3C2412_IISMOD));
 		break;
 
 	case S3C_I2SV2_DIV_PRESCALER:
@@ -572,7 +612,8 @@ static int s3c2412_i2s_set_clkdiv(struct snd_soc_dai *cpu_dai,
 		} else {
 			writel(0x0, i2s->regs + S3C2412_IISPSR);
 		}
-		pr_debug("%s: PSR=%08x\n", __func__, readl(i2s->regs + S3C2412_IISPSR));
+		pr_debug("%s: PSR=%08x\n", __func__,
+				readl(i2s->regs + S3C2412_IISPSR));
 		break;
 
 	default:
@@ -685,9 +726,6 @@ EXPORT_SYMBOL_GPL(s3c_i2sv2_probe);
 
 #ifdef CONFIG_PM
 
-#include <mach/map.h>
-#define S3C_VA_AUDSS	S3C_ADDR(0x01600000)	/* Audio SubSystem */
-#include <mach/regs-audss.h>
 static int s3c2412_i2s_suspend(struct snd_soc_dai *dai)
 {
 	struct s3c_i2sv2_info *i2s = to_info(dai);
@@ -698,7 +736,7 @@ static int s3c2412_i2s_suspend(struct snd_soc_dai *dai)
 	i2s->suspend_iispsr = readl(i2s->regs + S3C2412_IISPSR);
 
 	/* Is this dai for I2Sv5? */
-	if(dai->id == 0)
+	if (dai->id == 0)
 		i2s->suspend_audss_clksrc = readl(S5P_CLKSRC_AUDSS);
 
 	/* some basic suspend checks */
@@ -729,7 +767,7 @@ static int s3c2412_i2s_resume(struct snd_soc_dai *dai)
 	writel(i2s->suspend_iispsr, i2s->regs + S3C2412_IISPSR);
 
 	/* Is this dai for I2Sv5? */
-	if(dai->id == 0)
+	if (dai->id == 0)
 		writel(i2s->suspend_audss_clksrc, S5P_CLKSRC_AUDSS);
 
 	writel(S3C2412_IISFIC_RXFLUSH | S3C2412_IISFIC_TXFLUSH,

@@ -21,6 +21,7 @@
 #include <mach/gpio.h>
 #include <plat/gpio-cfg.h>
 #include <asm/gpio.h>
+#include <mach/gpio-aries.h>
 #include "melfas_download.h"
 
 //============================================================

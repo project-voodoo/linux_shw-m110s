@@ -30,6 +30,7 @@
 #include <linux/earlysuspend.h>
 #include <asm/io.h>
 #include <mach/gpio.h>
+#include <mach/gpio-aries.h>
 
 #ifdef CONFIG_CPU_FREQ
 #include <mach/cpu-freq-v210.h>
@@ -225,7 +226,7 @@ void  touchkey_work_func(struct work_struct * p)
 				user_press_on = 0;
 				input_report_key(touchkey_driver->input_dev, keycode, 0);
 				input_sync(touchkey_driver->input_dev);
-				printk(TCHKEY_KERN_DEBUG "touchkey release keycode: %d\n", keycode);
+//				printk(TCHKEY_KERN_DEBUG "touchkey release keycode: %d\n", keycode);
 			}
 			else // key pressed
 			{
@@ -240,14 +241,14 @@ void  touchkey_work_func(struct work_struct * p)
 					{
 						TSP_forced_release();
 #ifdef CONFIG_CPU_FREQ	
-						set_dvfs_target_level(LEV_800MHZ);
+//						set_dvfs_target_level(LEV_800MHZ);//set to comment temporarily by mseok.chae 2011.01.11
 #endif
 						user_press_on = 2;
 						back_sensitivity = data[4];
 						input_report_key(touchkey_driver->input_dev, keycode,1);
 						input_sync(touchkey_driver->input_dev);
-						printk(TCHKEY_KERN_DEBUG "back key sensitivity = %d\n",back_sensitivity);
-						printk(TCHKEY_KERN_DEBUG " touchkey press keycode: %d\n", keycode);
+//						printk(TCHKEY_KERN_DEBUG "back key sensitivity = %d\n",back_sensitivity);
+//						printk(TCHKEY_KERN_DEBUG " touchkey press keycode: %d\n", keycode);
 					}
 					else if(keycode==TOUCHKEY_KEYCODE_MENU)
 					{
@@ -255,8 +256,8 @@ void  touchkey_work_func(struct work_struct * p)
 						menu_sensitivity = data[3];
 						input_report_key(touchkey_driver->input_dev, keycode,1);
 						input_sync(touchkey_driver->input_dev);
-						printk(TCHKEY_KERN_DEBUG "menu key sensitivity = %d\n",menu_sensitivity);
-						printk(TCHKEY_KERN_DEBUG " touchkey press keycode: %d\n", keycode);
+//						printk(TCHKEY_KERN_DEBUG "menu key sensitivity = %d\n",menu_sensitivity);
+//						printk(TCHKEY_KERN_DEBUG " touchkey press keycode: %d\n", keycode);
 					}
 				}
 			}
@@ -284,12 +285,12 @@ static void melfas_touchkey_early_suspend(struct early_suspend *h)
 	if(user_press_on==1)
 	{
 		input_report_key(touchkey_driver->input_dev, TOUCHKEY_KEYCODE_MENU, 0);
-		printk(TCHKEY_KERN_DEBUG "%s release menu key\n",__func__);
+//		printk(TCHKEY_KERN_DEBUG "%s release menu key\n",__func__);
 	}
 	else if(user_press_on==2)
 	{		
 		input_report_key(touchkey_driver->input_dev, TOUCHKEY_KEYCODE_BACK, 0);
-		printk(TCHKEY_KERN_DEBUG "%s release back key\n",__func__);
+//		printk(TCHKEY_KERN_DEBUG "%s release back key\n",__func__);
 	}
 	user_press_on = 0;
 	
@@ -538,15 +539,15 @@ static struct miscdevice touchkey_update_device = {
 	.fops = &touchkey_update_fops,
 };
 
-static DEVICE_ATTR(touchkey_activation, S_IRUGO | S_IWUGO, NULL, touchkey_activation_store);
+static DEVICE_ATTR(touchkey_activation, 0664, NULL, touchkey_activation_store);
 static DEVICE_ATTR(touchkey_version, S_IRUGO, touchkey_version_show, NULL);
 static DEVICE_ATTR(touchkey_recommend, S_IRUGO, touchkey_recommend_show, NULL);
 static DEVICE_ATTR(touchkey_firmup, S_IRUGO, touchkey_firmup_show, NULL);
 static DEVICE_ATTR(touchkey_init, S_IRUGO, touchkey_init_show, NULL);
 static DEVICE_ATTR(touchkey_menu, S_IRUGO, touchkey_menu_show, NULL);
 static DEVICE_ATTR(touchkey_back, S_IRUGO, touchkey_back_show, NULL);
-static DEVICE_ATTR(brightness, S_IRUGO | S_IWUGO, NULL, touch_led_control);
-static DEVICE_ATTR(enable_disable, S_IRUGO | S_IWUGO, NULL, touchkey_enable_disable);
+static DEVICE_ATTR(brightness, 0664, NULL, touch_led_control);
+static DEVICE_ATTR(enable_disable, 0664, NULL, touchkey_enable_disable);
 
 static int __init touchkey_init(void)
 {

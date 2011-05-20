@@ -205,7 +205,9 @@ INC_UINT16 INC_SPI_REG_READ(INC_UINT8 ucI2CID, INC_UINT16 uiAddr)
 	transfer[1].delay_usecs = 0;
 	spi_message_add_tail( &(transfer[1]), &msg );
 
+//printk("TDMB r: spi_sync() #1\n");
 	status = spi_sync(spi_dmb, &msg);
+//printk("TDMB r: spi_sync() #1_end\n");    
 	uiRcvData = (INC_UINT16)(acRxBuff[0] << 8)|(INC_UINT16)acRxBuff[1];
 
     //TODO SPI Read code here...
@@ -241,9 +243,9 @@ INC_UINT8 INC_SPI_REG_WRITE(INC_UINT8 ucI2CID, INC_UINT16 uiAddr, INC_UINT16 uiD
 	transfer.bits_per_word = 8;
 	transfer.delay_usecs = 0;
 	spi_message_add_tail( &transfer, &msg );
-
+//printk("TDMB w: spi_sync() #1\n");
 	status = spi_sync(spi_dmb, &msg);
-	
+//printk("TDMB w: spi_sync() #1_end\n");	
     //TODO SPI SDO Send code here...
 
     return INC_SUCCESS;
@@ -285,8 +287,9 @@ INC_UINT8 INC_SPI_READ_BURST(INC_UINT8 ucI2CID, INC_UINT16 uiAddr, INC_UINT8* pB
 	transfer[1].bits_per_word = 8;
 	transfer[1].delay_usecs = 0;
 	spi_message_add_tail( &(transfer[1]), &msg );
+//printk("TDMB br: spi_sync() #1\n");    
 	status = spi_sync(spi_dmb, &msg);
-
+//printk("TDMB br: spi_sync() #1_end\n");    
     return INC_SUCCESS;
 }
 

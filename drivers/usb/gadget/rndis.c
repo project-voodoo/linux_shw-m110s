@@ -28,6 +28,7 @@
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/proc_fs.h>
+#include <linux/slab.h>
 #include <linux/seq_file.h>
 #include <linux/netdevice.h>
 
@@ -63,8 +64,7 @@ MODULE_PARM_DESC (rndis_debug, "enable debugging");
 static rndis_params rndis_per_dev_params [RNDIS_MAX_CONFIGS];
 
 /* Driver Version */
-//static const __le32 rndis_driver_version = cpu_to_le32 (1);
-static const __le16 rndis_driver_version = cpu_to_le16 (0x0500);
+static const __le32 rndis_driver_version = cpu_to_le32 (1);
 
 /* Function Prototypes */
 static rndis_resp_t *rndis_add_response (int configNr, u32 length);
@@ -292,15 +292,18 @@ gen_ndis_query_resp (int configNr, u32 OID, u8 *buf, unsigned buf_len,
 	/* mandatory */
 	case OID_GEN_VENDOR_DESCRIPTION:
 		pr_debug("%s: OID_GEN_VENDOR_DESCRIPTION\n", __func__);
-		length = strlen (rndis_per_dev_params [configNr].vendorDescr);
-		memcpy (outbuf,
-			rndis_per_dev_params [configNr].vendorDescr, length);
+		if ( rndis_per_dev_params [configNr].vendorDescr ) {
+			length = strlen (rndis_per_dev_params [configNr].vendorDescr);
+			memcpy (outbuf,
+				rndis_per_dev_params [configNr].vendorDescr, length);
+		} else {
+			outbuf[0] = 0;
+		}
 		retval = 0;
 		break;
 
 	case OID_GEN_VENDOR_DRIVER_VERSION:
 		pr_debug("%s: OID_GEN_VENDOR_DRIVER_VERSION\n", __func__);
-		length = 2;
 		/* Created as LE */
 		*outbuf = rndis_driver_version;
 		retval = 0;
@@ -582,19 +585,13 @@ static int rndis_init_response (int configNr, rndis_init_msg_type *buf)
 	resp->MinorVersion = cpu_to_le32 (RNDIS_MINOR_VERSION);
 	resp->DeviceFlags = cpu_to_le32 (RNDIS_DF_CONNECTIONLESS);
 	resp->Medium = cpu_to_le32 (RNDIS_MEDIUM_802_3);
-
 	resp->MaxPacketsPerTransfer = cpu_to_le32 (1);
-
-	//total : 1580 bytes
 	resp->MaxTransferSize = cpu_to_le32 (
 		  params->dev->mtu
 		+ sizeof (struct ethhdr)
 		+ sizeof (struct rndis_packet_msg_type)
 		+ 22);
-//by ss1
-//	resp->PacketAlignmentFactor = cpu_to_le32 (0);
-//  in byte, (exponent of 2)
-	resp->PacketAlignmentFactor = cpu_to_le32 (2);
+	resp->PacketAlignmentFactor = cpu_to_le32 (0);
 	resp->AFListOffset = cpu_to_le32 (0);
 	resp->AFListSize = cpu_to_le32 (0);
 

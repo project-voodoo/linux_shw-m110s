@@ -54,7 +54,7 @@ static char banner[] __initdata = KERN_INFO "S3C MDNIE Driver, (c) 2010 Samsung 
 
 struct clk		*mdnie_clock;
 
-//#define MDNIE_TUNING
+// #define MDNIE_TUNING
 
 /*********** for debug **********************************************************/
 #if 0 
@@ -324,7 +324,6 @@ EXPORT_SYMBOL(mDNIe_txtbuf_to_parsing_for_lightsensor);
 #endif
 
 
-
 int s3c_mdnie_hw_init(void)
 {
 	printk("MDNIE  INIT ..........\n");
@@ -548,7 +547,7 @@ void mDNIe_Set_Mode(Lcd_mDNIe_UI mode, u8 mDNIe_Outdoor_OnOff)
 		current_mDNIe_OutDoor_OnOff = FALSE;
 	}	
 
-#if defined(CONFIG_M115S)
+#if defined(CONFIG_ARIES_LATONA)
 	Lcd_cabc_on();
 
 	if (current_mDNIe_UI == mDNIe_DMB_MODE ||
@@ -583,9 +582,9 @@ EXPORT_SYMBOL(mDNIe_Mode_Set);
 static ssize_t mdnieset_ui_file_cmd_show(struct device *dev,
         struct device_attribute *attr, char *buf)
 {
-	printk("called %s \n",__func__);
-
 	int mdnie_ui = 0;
+
+	printk("called %s \n",__func__);
 
 	switch(current_mDNIe_UI)
 	{
@@ -612,8 +611,8 @@ static ssize_t mdnieset_ui_file_cmd_show(struct device *dev,
 
 		case mDNIe_NAVI:
 			mdnie_ui = 5;
-			break;
-			
+                        break;
+
 		// ++ S1-KOR Feature	
 		case mDNIe_DMB_MODE:
 			mdnie_ui = 6;
@@ -676,7 +675,7 @@ static ssize_t mdnieset_ui_file_cmd_store(struct device *dev,
 			
 		case SIG_MDNIe_DMB_COLD_MODE:			
 			current_mDNIe_UI = mDNIe_DMB_COLD_MODE;
-			break;	
+			break;
 			
 		default:
 			printk("\nmdnieset_ui_file_cmd_store value is wrong : value(%d)\n",value);
@@ -688,7 +687,7 @@ static ssize_t mdnieset_ui_file_cmd_store(struct device *dev,
 	return size;
 }
 
-static DEVICE_ATTR(mdnieset_ui_file_cmd,0666, mdnieset_ui_file_cmd_show, mdnieset_ui_file_cmd_store);
+static DEVICE_ATTR(mdnieset_ui_file_cmd,0664, mdnieset_ui_file_cmd_show, mdnieset_ui_file_cmd_store);
 
 static ssize_t mdnieset_outdoor_file_cmd_show(struct device *dev,
         struct device_attribute *attr, char *buf)
@@ -721,7 +720,7 @@ static ssize_t mdnieset_outdoor_file_cmd_store(struct device *dev,
 	return size;
 }
 
-static DEVICE_ATTR(mdnieset_outdoor_file_cmd,0666, mdnieset_outdoor_file_cmd_show, mdnieset_outdoor_file_cmd_store);
+static DEVICE_ATTR(mdnieset_outdoor_file_cmd,0664, mdnieset_outdoor_file_cmd_show, mdnieset_outdoor_file_cmd_store);
 
 void init_mdnie_class(void)
 {

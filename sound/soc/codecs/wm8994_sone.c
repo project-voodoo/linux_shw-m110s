@@ -18,8 +18,8 @@
 #include <plat/gpio-cfg.h>
 #include <plat/map-base.h>
 #include <mach/regs-clock.h>
-#include <mach/gpio.h>
-#include "wm8994.h"
+#include <mach/gpio-aries.h>
+#include "wm8994_samsung.h"
 
 #define SUBJECT "wm8994_sone.c"
 
@@ -92,11 +92,7 @@
 #define TUNING_SPKMIXR_ATTEN                    0x00 // 23h
 
 // Playback
-#if defined CONFIG_M110S
 #define TUNING_MP3_SPKL_VOL                     0x3E // 26h // [DC24-1742] 0x3E (+5dB) // H/W Req.
-#elif defined CONFIG_M115S
-#define TUNING_MP3_SPKL_VOL                     0x3D // 26h // [DL07-1815] 0x3D (+4dB) // H/W Req.
-#endif
 #define TUNING_MP3_CLASSD_VOL                   0x06 // 25h // [DC24-1742] 0x06 (+9dB) // H/W Req.
 
 // Voice Call
@@ -119,11 +115,7 @@
 // **** MIC **** //
 // Main
 // Normal Recording
-#if defined CONFIG_M110S
 #define TUNING_RECORD_MAIN_INPUTMIX_VOL         0x19 // 18h // [DE15-1659] 0x19 (+21dB) // H/W Req.
-#elif defined CONFIG_M115S
-#define TUNING_RECORD_MAIN_INPUTMIX_VOL         0x17 // 18h // [DL07-1815] 0x17 (+18dB) // H/W Req.
-#endif
 #define TUNING_RECORD_MAIN_AIF1ADCL_VOL         0xC0 // 400h
 #define TUNING_RECORD_MAIN_AIF1ADCR_VOL         0xC0 // 401h
 
@@ -176,13 +168,13 @@
 #define JACK_TVOUT_DEVICE                       0x20
 #define JACK_UNKNOWN_DEVICE                     0x40
 
-extern int hw_version_check(void);
 extern short int get_headset_status(void);		// For ear-jack control(MIC-Bias)
 extern void set_recording_status(int value);	// For preventing MIC Bias off on using MIC.
 extern unsigned int HWREV;
 
 int audio_init(void)
 {
+#if 0
 	/* GPIO_CODEC_LDO_EN (POWER) SETTTING */
 	if (gpio_is_valid(GPIO_CODEC_LDO_EN))
 	{
@@ -192,16 +184,16 @@ int audio_init(void)
 	}
 	s3c_gpio_setpull(GPIO_CODEC_LDO_EN, S3C_GPIO_PULL_NONE);
 	s3c_gpio_slp_setpull_updown(GPIO_CODEC_LDO_EN, S3C_GPIO_PULL_NONE);
-
+#endif
 	/* GPIO_CODEC_XTAL_EN (CLOCK) SETTTING */
-#if defined CONFIG_M110S
+#if 1 //defined CONFIG_M110S
 	if (HWREV<=3)
 	{
         if (gpio_is_valid(GPIO_CODEC_XTAL_EN_R03)) {
         	if (gpio_request(GPIO_CODEC_XTAL_EN_R03, "GPIO_CODEC_XTAL_EN"))
     			printk(KERN_ERR "Failed to request GPIO_CODEC_XTAL_EN! \n");
 
-    		gpio_direction_output(GPIO_CODEC_XTAL_EN_R03, 1);
+    		gpio_direction_output(GPIO_CODEC_XTAL_EN_R03, 0);
     	}
     	s3c_gpio_setpull(GPIO_CODEC_XTAL_EN_R03, S3C_GPIO_PULL_NONE);
 	}
@@ -211,11 +203,11 @@ int audio_init(void)
         	if (gpio_request(GPIO_CODEC_XTAL_EN_R04, "GPIO_CODEC_XTAL_EN"))
     			printk(KERN_ERR "Failed to request GPIO_CODEC_XTAL_EN! \n");
 
-    		gpio_direction_output(GPIO_CODEC_XTAL_EN_R04, 1);
+    		gpio_direction_output(GPIO_CODEC_XTAL_EN_R04, 0);
     	}
     	s3c_gpio_setpull(GPIO_CODEC_XTAL_EN_R04, S3C_GPIO_PULL_NONE);
     }
-#elif defined CONFIG_M115S
+#else // #elif defined CONFIG_M115S
     if (gpio_is_valid(GPIO_CODEC_XTAL_EN)) {
     	if (gpio_request(GPIO_CODEC_XTAL_EN, "GPIO_CODEC_XTAL_EN"))
 			printk(KERN_ERR "Failed to request GPIO_CODEC_XTAL_EN! \n");
@@ -249,63 +241,49 @@ int audio_power(int en, int check)
 {
 	if(check)
 	{
-		DEBUG_LOG(" CONTROL audio_power() check %d en %d", check, en);
 		if(en)
 		{
-			gpio_set_value(GPIO_CODEC_LDO_EN, 1);
+			//gpio_set_value(GPIO_CODEC_LDO_EN, 1);
+			//mdelay(10);
 
-			mdelay(10);
-
-#if defined CONFIG_M110S
-			if (HWREV<=3)
-			{
+#if 1 //defined CONFIG_M110S
+			if (HWREV<=3) {
 				gpio_set_value(GPIO_CODEC_XTAL_EN_R03, 1);
-			}
-			else
-			{
+			} else {
 				s3c_gpio_cfgpin(GPIO_CODEC_XTAL_EN_R04, S3C_GPIO_OUTPUT);
-				s3c_gpio_setpin(GPIO_CODEC_XTAL_EN_R04, 1);
+				//s3c_gpio_setpin(GPIO_CODEC_XTAL_EN_R04, 1);
+				gpio_set_value(GPIO_CODEC_XTAL_EN_R04, 1);
 			}
-#elif defined CONFIG_M115S
+#else // #elif defined CONFIG_M115S
             s3c_gpio_cfgpin(GPIO_CODEC_XTAL_EN, S3C_GPIO_OUTPUT);
 			s3c_gpio_setpin(GPIO_CODEC_XTAL_EN, 1);
 #endif
-		}
-		else
-		{
-			gpio_set_value(GPIO_CODEC_LDO_EN, 0);
+		} else {
+			//gpio_set_value(GPIO_CODEC_LDO_EN, 0);
+			//mdelay(125);
 
-			mdelay(125);
-
-#if defined CONFIG_M110S
-			if (HWREV<=3)
-			{
+#if 1 //defined CONFIG_M110S
+			if (HWREV<=3) {
 				gpio_set_value(GPIO_CODEC_XTAL_EN_R03, 0);
-			}
-			else
-			{
+			} else {
 				s3c_gpio_cfgpin(GPIO_CODEC_XTAL_EN_R04, S3C_GPIO_OUTPUT);
-				s3c_gpio_setpin(GPIO_CODEC_XTAL_EN_R04, 0);
+				//s3c_gpio_setpin(GPIO_CODEC_XTAL_EN_R04, 0);
+				gpio_set_value(GPIO_CODEC_XTAL_EN_R04, 0);
 			}
-#elif defined CONFIG_M115S
+#else // #elif defined CONFIG_M115S
             s3c_gpio_cfgpin(GPIO_CODEC_XTAL_EN, S3C_GPIO_OUTPUT);
 			s3c_gpio_setpin(GPIO_CODEC_XTAL_EN, 0);
 #endif
 		}
-
-		DEBUG_LOG(" AUDIO POWER COMPLETED : %d", en);
 	}
 
-#if defined CONFIG_M110S
-	if (HWREV<=3)
-	{
+#if 1 //defined CONFIG_M110S
+	if (HWREV<=3) {
 		printk(SND_KERN_DEBUG "[WM8994] rev3 LDO %d XTAL %d\n", gpio_get_value(GPIO_CODEC_LDO_EN), gpio_get_value(GPIO_CODEC_XTAL_EN_R03));
-	}
-	else
-	{
+	} else {
 		printk(SND_KERN_DEBUG "[WM8994] gpio en %d LDO %d XTAL %d\n", en, gpio_get_value(GPIO_CODEC_LDO_EN), gpio_get_value(GPIO_CODEC_XTAL_EN_R04));
 	}
-#elif defined CONFIG_M115S
+#else // #elif defined CONFIG_M115S
     printk(SND_KERN_DEBUG "[WM8994] gpio en %d LDO %d XTAL %d\n", en, gpio_get_value(GPIO_CODEC_LDO_EN), gpio_get_value(GPIO_CODEC_XTAL_EN));
 #endif
 
@@ -315,7 +293,7 @@ int audio_power(int en, int check)
 void audio_ctrl_mic_bias_gpio(struct snd_soc_codec *codec, char callid)
 {
 	u32 enable = 0;
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 	int headset_state;
 
 	if (wm8994->codec_state & (CAPTURE_ACTIVE|CALL_ACTIVE))
@@ -325,73 +303,56 @@ void audio_ctrl_mic_bias_gpio(struct snd_soc_codec *codec, char callid)
 	if ( (wm8994->cur_path == BT) )
 		enable = 0;
 
-#if defined CONFIG_M110S
+#if 1 //defined CONFIG_M110S
 	if (HWREV>=7)
 #endif
 	{
 		headset_state = get_headset_status();
-		if(enable)
-		{
+		if(enable) {
 			set_recording_status(1);
-			if (headset_state == JACK_4_POLE_DEVICE)
-			{
-				if(gpio_get_value(GPIO_SUB_MICBIAS_EN) != 1)
-				{
+			if (headset_state == JACK_4_POLE_DEVICE) {
+				if(gpio_get_value(GPIO_SUB_MICBIAS_EN) != 1) {
 					//gpio_set_value(GPIO_MICBIAS_EN, 0);
 					gpio_set_value(GPIO_SUB_MICBIAS_EN, 1);
 				}
-			}
-			else
-			{
-				if(gpio_get_value(GPIO_SUB_MICBIAS_EN) != 0)
-				{
+			} else {
+				if(gpio_get_value(GPIO_SUB_MICBIAS_EN) != 0) {
 					gpio_set_value(GPIO_SUB_MICBIAS_EN, 0);
 				}
 			}
 
 			if ((headset_state == JACK_NO_DEVICE)||(headset_state == JACK_3_POLE_DEVICE)
-				||((wm8994->cur_path == SPK)&&(wm8994->codec_state & CALL_ACTIVE)))
-			{
-				if(gpio_get_value(GPIO_MICBIAS_EN) != 1)
-				{
+				||((wm8994->cur_path == SPK)&&(wm8994->codec_state & CALL_ACTIVE))) {
+				if(gpio_get_value(GPIO_MICBIAS_EN) != 1) {
 					gpio_set_value(GPIO_MICBIAS_EN, 1);
 					//gpio_set_value(GPIO_SUB_MICBIAS_EN, 0);
 				}
 			}
 			// [DE15-2236] hi99.an // separate on/off function call for SPK + CALL_ACTIVE + JACK_4_POLE_DEVICE
-		}
-		else
-		{
+		} else {
 			set_recording_status(0);
 			gpio_set_value(GPIO_MICBIAS_EN, 0);
-			if (headset_state != JACK_4_POLE_DEVICE)
-			{
+			if (headset_state != JACK_4_POLE_DEVICE) {
 				gpio_set_value(GPIO_SUB_MICBIAS_EN, 0);
 			}
 		}
 
 		printk(SND_KERN_DEBUG "en|m|s|i :: %d|%d|%d|%c\n", enable, gpio_get_value(GPIO_MICBIAS_EN), gpio_get_value(GPIO_SUB_MICBIAS_EN), callid);
 	}
-#if defined CONFIG_M110S
-	else
-	{
-		if (gpio_get_value(GPIO_MICBIAS_EN) == enable)
-		{
+#if 1 //defined CONFIG_M110S
+	else {
+		if (gpio_get_value(GPIO_MICBIAS_EN) == enable) {
 			DEBUG_LOG("return same value %d", enable);
 			return;
 		}
 
-		if(enable)
-		{
+		if(enable) {
 			set_recording_status(1);
 			gpio_set_value(GPIO_MICBIAS_EN, 1);
-		}
-		else
-		{
+		} else {
 			set_recording_status(0);
 			headset_state = get_headset_status();
-			if(headset_state != JACK_4_POLE_DEVICE)
-			{
+			if(headset_state != JACK_4_POLE_DEVICE) {
 				gpio_set_value(GPIO_MICBIAS_EN, 0);
 			}
 		}
@@ -406,30 +367,54 @@ void audio_ctrl_sleep_gpio(int enable)
 {
 	int state;
 
-	if(enable)
-	{
+	if(enable) {
 		DEBUG_LOG("Set gpio to low on sleep.");
 		state = S3C_GPIO_SLP_OUT0;
-	}
-	else
-	{
+	} else {
 		DEBUG_LOG("Set gpio to preserve on sleep.");
 		state = S3C_GPIO_SLP_PREV;
 	}
 
 	// GPIO SLEEP CONFIG // preserve output state in sleep
 	s3c_gpio_slp_cfgpin(GPIO_CODEC_LDO_EN, state);
-
 	s3c_gpio_slp_cfgpin(GPIO_MICBIAS_EN, state);
 
-#if defined CONFIG_M110S
-	if (HWREV<=3)
+#if 1 // defined CONFIG_M110S
+	if (HWREV<=3) {
         s3c_gpio_slp_cfgpin(GPIO_CODEC_XTAL_EN_R03, state);
-    else
+    } else {
 		s3c_gpio_slp_cfgpin(GPIO_CODEC_XTAL_EN_R04, state);
-#elif defined CONFIG_M115S
+	}
+#else // #elif defined CONFIG_M115S
     s3c_gpio_slp_cfgpin(GPIO_CODEC_XTAL_EN, state);
 #endif
+}
+
+static void wait_for_dc_servo(struct snd_soc_codec *codec, unsigned int op)
+{
+	unsigned int reg;
+	int count = 0;
+	unsigned int val, start;
+
+	val = (op|WM8994_DCS_ENA_CHAN_0|WM8994_DCS_ENA_CHAN_1);
+
+	/* Trigger the command */
+	snd_soc_write(codec, WM8994_DC_SERVO_1, val);
+
+	start = jiffies;
+	pr_debug("%s: Waiting for DC servo...\n", __func__);
+
+	do {
+		count++;
+		msleep(1);
+		reg = wm8994_read(codec, WM8994_DC_SERVO_1);
+		pr_debug("%s: DC servo: %x\n", __func__, reg);
+	} while (reg & op && count < 400);
+
+	pr_debug("%s: DC servo took %dms\n", __func__, jiffies_to_msecs(jiffies - start));
+
+	if (reg & op)
+		pr_err("%s: Timed out waiting for DC Servo\n", __func__);
 }
 
 void wm8994_block_control_playback(int on, struct snd_soc_codec *codec)
@@ -446,9 +431,14 @@ void wm8994_block_control_record(int on, struct snd_soc_codec *codec)
 
 #define FUNCTION_LIST_DISABLE
 
-void wm8994_disable_playback_path(struct snd_soc_codec *codec, enum playback_path path)
+void wm8994_disable_path(struct snd_soc_codec *codec, enum audio_path path)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	return wm8994_disable_playback_path(codec, path);
+}
+
+void wm8994_disable_playback_path(struct snd_soc_codec *codec, enum audio_path path)
+{
+	struct wm8994_priv *wm8994 = codec->drvdata;
 	u16 val;
 
 	DEBUG_LOG("Path = [%d]", path);
@@ -495,7 +485,8 @@ void wm8994_disable_playback_path(struct snd_soc_codec *codec, enum playback_pat
 
 			// 24H // SPKMIXL/R off
 			val = wm8994_read(codec, WM8994_SPKOUT_MIXERS);
-			val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTR_MASK);
+			val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|
+				WM8994_SPKMIXR_TO_SPKOUTR_MASK|WM8994_SPKMIXL_TO_SPKOUTR_MASK);
 			wm8994_write(codec, WM8994_SPKOUT_MIXERS, val);
 
 			// 36H // DAC1L_TO_SPKMIXL off
@@ -505,6 +496,7 @@ void wm8994_disable_playback_path(struct snd_soc_codec *codec, enum playback_pat
 			break;
 
 		case HP:
+		case HP_NO_MIC:
 			if(wm8994->codec_state & CALL_ACTIVE)
 			{
 				val = wm8994_read(codec, WM8994_DAC1_LEFT_VOLUME);
@@ -558,7 +550,7 @@ void wm8994_disable_playback_path(struct snd_soc_codec *codec, enum playback_pat
 			break;
 #endif
 		case SPK_HP :
-			if(wm8994->codec_state & CALL_ACTIVE)
+			if(wm8994->codec_state & VOICE_CALL_ACTIVE)
 			{
 				val = wm8994_read(codec, WM8994_POWER_MANAGEMENT_1);
 				val &= ~(WM8994_HPOUT1L_ENA_MASK|WM8994_HPOUT1R_ENA_MASK|WM8994_SPKOUTL_ENA_MASK);
@@ -595,7 +587,8 @@ void wm8994_disable_playback_path(struct snd_soc_codec *codec, enum playback_pat
 
 				// 24H // SPKMIX_TO_SPKOUT off
 				val = wm8994_read(codec, WM8994_SPKOUT_MIXERS);
-				val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTR_MASK);
+				val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|
+					WM8994_SPKMIXR_TO_SPKOUTR_MASK|WM8994_SPKMIXL_TO_SPKOUTR_MASK);
 				wm8994_write(codec, WM8994_SPKOUT_MIXERS, val);
 
 				// 36H // DAC1L_TO_SPKMIXL off
@@ -615,7 +608,7 @@ void wm8994_disable_playback_path(struct snd_soc_codec *codec, enum playback_pat
 
 void wm8994_disable_rec_path(struct snd_soc_codec *codec, enum mic_path rec_path)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -660,6 +653,7 @@ void wm8994_disable_rec_path(struct snd_soc_codec *codec, enum mic_path rec_path
 				{
 					printk(SND_KERN_DEBUG "[WM8994] turn off hpf in voip main mic...\n");
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 					wm8994_write(codec, WM8994_AIF1_DRC1_1, 0x0098); // 440h // DRC disable
 #endif
 #ifdef FEATURE_VOIP_HPFILTER
@@ -778,6 +772,7 @@ void wm8994_disable_rec_path(struct snd_soc_codec *codec, enum mic_path rec_path
 				{
 					printk(SND_KERN_DEBUG "[WM8994] turn off hpf in voip ear mic...\n");
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 					wm8994_write(codec, WM8994_AIF1_DRC1_1, 0x0098); // 440h // DRC disable
 #endif
 #ifdef FEATURE_VOIP_HPFILTER
@@ -896,15 +891,13 @@ void wm8994_disable_rec_path(struct snd_soc_codec *codec, enum mic_path rec_path
 
 void wm8994_record_headset_mic(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
-	DEBUG_LOG("Recording through Headset Mic\n");
-
-	if (wm8994->codec_state & (CALL_ACTIVE))
+	if (wm8994->codec_state & (VOICE_CALL_ACTIVE))
 	{
-		printk(SND_KERN_DEBUG "[WM8994] Recording ear mic - in call\n");
+		DEBUG_LOG("[WM8994] recording ear mic(in voicecall)");
 
 		// 300H // copy AIF1ADCR_SRC data to AIF1ADCL_SRC // val: 0x0010
 		//val = wm8994_read(codec, WM8994_AIF1_CONTROL_1);
@@ -966,7 +959,7 @@ void wm8994_record_headset_mic(struct snd_soc_codec *codec)
 	}
 	else
 	{
-		printk(SND_KERN_DEBUG "[WM8994] Recording ear mic - normal\n");
+		DEBUG_LOG("[WM8994] recording ear mic(normal)");
 
 		// 300H // copy AIF1ADCR_SRC data to AIF1ADCL_SRC // val: 0x0010
 		val = wm8994_read(codec, WM8994_AIF1_CONTROL_1);
@@ -997,7 +990,7 @@ void wm8994_record_headset_mic(struct snd_soc_codec *codec)
 			// 1AH // IN1R PGA // IN1R UNMUTE, SET VOL
 			val = wm8994_read(codec, WM8994_RIGHT_LINE_INPUT_1_2_VOLUME);
 			val &= ~(WM8994_IN1R_MUTE_MASK|WM8994_IN1R_VOL_MASK);
-			if(wm8994->recognition_active == REC_ON)
+			if(wm8994->input_source == RECOGNITION)
 				val |= (WM8994_IN1R_VU|TUNING_RECOGNITION_EAR_INPUTMIX_VOL);
 			else
 				val |= (WM8994_IN1R_VU|TUNING_RECORD_EAR_INPUTMIX_VOL);
@@ -1006,7 +999,7 @@ void wm8994_record_headset_mic(struct snd_soc_codec *codec)
 			// 2AH // MIXINR PGA // IN2R_TO_MIXINR MUTE, IN1R_TO_MIXINR UNMUTE, 0dB
 			val = wm8994_read(codec, WM8994_INPUT_MIXER_4);
 			val &= ~(WM8994_IN1R_TO_MIXINR_MASK|WM8994_IN1R_MIXINR_VOL_MASK|WM8994_MIXOUTR_MIXINR_VOL_MASK);
-			if(wm8994->recognition_active == REC_ON)
+			if(wm8994->input_source == RECOGNITION)
 				val |= (WM8994_IN1R_TO_MIXINR|WM8994_IN1R_MIXINR_VOL); //30db
 			else
 				val |= (WM8994_IN1R_TO_MIXINR); //0db
@@ -1032,21 +1025,19 @@ void wm8994_record_headset_mic(struct snd_soc_codec *codec)
 		wm8994_write(codec, WM8994_AIF1_ADC1_RIGHT_MIXER_ROUTING, val);
 	}
 
-	printk(SND_KERN_DEBUG "[WM8994] wm8994_record_headset_mic()\n");
+	printk(SND_KERN_DEBUG "[WM8994] wm8994_record_headset_mic(%#x)\n", wm8994->codec_state);
 }
 
 
 void wm8994_record_main_mic(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
-	DEBUG_LOG("Recording through Main Mic\n");
-
 	if (wm8994->codec_state & (VOICE_CALL_ACTIVE))
 	{
-		printk(SND_KERN_DEBUG "[WM8994] Recording Main Mic - in voice call\n");
+		DEBUG_LOG("[WM8994] recording main mic(in voicecall)");
 
 		// 300H // copy AIF1ADCL_SRC data to AIF1ADCR_SRC // val: 0x0010
 		//val = wm8994_read(codec, WM8994_AIF1_CONTROL_1);
@@ -1113,7 +1104,7 @@ void wm8994_record_main_mic(struct snd_soc_codec *codec)
 	}
 	else
 	{
-		printk(SND_KERN_DEBUG "[WM8994] Recording Main Mic - normal\n");
+		DEBUG_LOG("[WM8994] recording main mic(normal)");
 
 		// 300H // copy AIF1ADCL_SRC data to AIF1ADCR_SRC // val: 0x0010
 		val = wm8994_read(codec, WM8994_AIF1_CONTROL_1);
@@ -1143,7 +1134,7 @@ void wm8994_record_main_mic(struct snd_soc_codec *codec)
 			// 18H // IN1L PGA // IN1L UNMUTE, SET VOL
 			val = wm8994_read(codec, WM8994_LEFT_LINE_INPUT_1_2_VOLUME);
 			val &= ~(WM8994_IN1L_MUTE_MASK|WM8994_IN1L_VOL_MASK);
-			if(wm8994->recognition_active == REC_ON)
+			if(wm8994->input_source == RECOGNITION)
 				val |= (WM8994_IN1L_VU|TUNING_RECOGNITION_MAIN_INPUTLINE_VOL); //volume
 			else
 				val |= (WM8994_IN1L_VU|TUNING_RECORD_MAIN_INPUTMIX_VOL);
@@ -1152,14 +1143,14 @@ void wm8994_record_main_mic(struct snd_soc_codec *codec)
 			// 29H // MIXINL PGA // IN2L_TO_MIXINL MUTE, IN1L_TO_MIXINL UNMUTE, 0dB
 			val = wm8994_read(codec, WM8994_INPUT_MIXER_3);
 			val &= ~(WM8994_IN1L_TO_MIXINL_MASK|WM8994_IN1L_MIXINL_VOL_MASK|WM8994_MIXOUTL_MIXINL_VOL_MASK);
-			if(wm8994->recognition_active == REC_ON)
+			if(wm8994->input_source == RECOGNITION)
 				val |= (WM8994_IN1L_TO_MIXINL);	// 0db
 			else
 				val |= (WM8994_IN1L_TO_MIXINL|WM8994_IN1L_MIXINL_VOL); // Boost On(+30dB)
 			wm8994_write(codec, WM8994_INPUT_MIXER_3, val);
 		}
 
-		if(wm8994->recognition_active == REC_ON)
+		if(wm8994->input_source == RECOGNITION)
 		{
 			// Voice Search Tuning
 			// 400H // AIF1 ADC1 Left Volume
@@ -1175,7 +1166,7 @@ void wm8994_record_main_mic(struct snd_soc_codec *codec)
 		val |= (WM8994_IN1LP_TO_IN1L|WM8994_IN1LN_TO_IN1L);
 		wm8994_write(codec, WM8994_INPUT_MIXER_2, val);
 
-		if(wm8994->recognition_active == REC_ON)
+		if(wm8994->input_source == RECOGNITION)
 		{
 			// 410H // AIF1 ADC1 Filters // AIF1 ADC1 hi-path filter on
 			val = wm8994_read(codec, WM8994_AIF1_ADC1_FILTERS);
@@ -1197,20 +1188,18 @@ void wm8994_record_main_mic(struct snd_soc_codec *codec)
 		wm8994_write(codec, WM8994_AIF1_ADC1_LEFT_MIXER_ROUTING, val);
 	}
 
-	printk(SND_KERN_DEBUG "[WM8994] wm8994_record_main_mic()\n");
+	printk(SND_KERN_DEBUG "[WM8994] wm8994_record_main_mic(%#x)\n", wm8994->codec_state);
 }
 
 void wm8994_record_bluetooth_mic(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
-	DEBUG_LOG("Recording through Bluetooth mic\n");
-
 	if (wm8994->codec_state & (CALL_ACTIVE))
 	{
-		printk(SND_KERN_DEBUG "[WM8994] Recording Bluetooth mic - in call\n");
+		DEBUG_LOG("[WM8994] recording bt mic(in call)");
 
 		// 01H // VMID_SEL_NORMAL, BIAS_ENA, MICB1_ENA
 		val = wm8994_read(codec, WM8994_POWER_MANAGEMENT_1);
@@ -1247,10 +1236,10 @@ void wm8994_record_bluetooth_mic(struct snd_soc_codec *codec)
 	}
 	else
 	{
-		printk(SND_KERN_DEBUG "[WM8994] Recording Bluetooth mic - normal\n");
+		DEBUG_LOG("[WM8994] recording bt mic(normal)");
 	}
 
-	printk(SND_KERN_DEBUG "[WM8994] wm8994_record_bluetooth_mic()\n");
+	printk(SND_KERN_DEBUG "[WM8994] wm8994_record_bluetooth_mic(%#x)\n", wm8994->codec_state);
 }
 
 /*
@@ -1332,7 +1321,7 @@ void wm8994_record_bluetooth(struct snd_soc_codec *codec)
 
 void wm8994_set_playback_receiver(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -1459,7 +1448,7 @@ void wm8994_set_playback_receiver(struct snd_soc_codec *codec)
 
 void wm8994_set_playback_headset(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -1591,6 +1580,24 @@ void wm8994_set_playback_headset(struct snd_soc_codec *codec)
 	wm8994_write(codec, WM8994_POWER_MANAGEMENT_3, 0x0030);
 
 	/* DC Servo sequence */
+#if 0 // test DC Servo Sequence
+	if (!wm8994->dc_servo[DCS_MEDIA]) {
+		wait_for_dc_servo(codec, (WM8994_DCS_TRIG_SERIES_0|WM8994_DCS_TRIG_SERIES_1));
+
+		valBefore = wm8994_read(codec, WM8994_DC_SERVO_4);
+		valLow = (signed char)(valBefore & 0xff);
+		valHigh = (signed char)((valBefore>>8) & 0xff);
+		valLow1 = ((signed short)(valLow-5)) & 0x00ff;
+		valHigh1 = (((signed short)(valHigh-5)<<8) & 0xff00);
+		valAfter = (valLow1|valHigh1);
+	} else {
+		valAfter = wm8994->dc_servo[DCS_MEDIA];
+	}
+
+	wm8994_write(codec, WM8994_DC_SERVO_4, valAfter);
+	wm8994->dc_servo[DCS_MEDIA] = valAfter;
+	wait_for_dc_servo(codec, (WM8994_DCS_TRIG_DAC_WR_0|WM8994_DCS_TRIG_DAC_WR_1));
+#else
 	val = wm8994_read(codec, WM8994_DC_SERVO_1);
 	val &= ~(0x0303);
 	val = (0x0303);
@@ -1613,7 +1620,7 @@ void wm8994_set_playback_headset(struct snd_soc_codec *codec)
 	wm8994_write(codec, WM8994_DC_SERVO_1, val);
 
 	msleep(20);
-
+#endif
 	// 60H // HP Output set
 	val = wm8994_read(codec, WM8994_ANALOGUE_HP_1);
 	val &= ~(WM8994_HPOUT1R_DLY_MASK|WM8994_HPOUT1R_OUTP_MASK|WM8994_HPOUT1R_RMV_SHORT_MASK|
@@ -1645,7 +1652,7 @@ void wm8994_set_playback_headset(struct snd_soc_codec *codec)
 
 void wm8994_set_playback_speaker(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -1710,13 +1717,15 @@ void wm8994_set_playback_speaker(struct snd_soc_codec *codec)
 
 	// 24H // SPKMIXL_TO_SPKOUTL set (R Channel unused)
 	val = wm8994_read(codec, WM8994_SPKOUT_MIXERS);
-	val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXL_TO_SPKOUTR_MASK|WM8994_SPKMIXR_TO_SPKOUTR_MASK);
+	val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|
+		WM8994_SPKMIXR_TO_SPKOUTR_MASK|WM8994_SPKMIXL_TO_SPKOUTR_MASK);
 	val |= (WM8994_SPKMIXL_TO_SPKOUTL);
 	wm8994_write(codec, WM8994_SPKOUT_MIXERS, val);
 
 	// 36H // DAC1L_TO_SPKMIXL set
 	val = wm8994_read(codec, WM8994_SPEAKER_MIXER);
-	val &= ~(WM8994_DAC1L_TO_SPKMIXL_MASK);
+	val &= ~(WM8994_MIXOUTL_TO_SPKMIXL_MASK|WM8994_MIXOUTR_TO_SPKMIXR_MASK|
+		WM8994_DAC1L_TO_SPKMIXL_MASK);
 	val |= (WM8994_DAC1L_TO_SPKMIXL);
 	wm8994_write(codec, WM8994_SPEAKER_MIXER, val);
 
@@ -1745,6 +1754,12 @@ void wm8994_set_playback_speaker(struct snd_soc_codec *codec)
 	val |= (WM8994_AIF1DAC1L_TO_DAC1L);
 	wm8994_write(codec, WM8994_DAC1_LEFT_MIXER_ROUTING, val);
 
+	// 602H // AIF1DAC1R_TO_DAC1R unset
+	val = wm8994_read(codec, WM8994_DAC1_RIGHT_MIXER_ROUTING);
+	val &= ~(WM8994_AIF1DAC1R_TO_DAC1R_MASK);
+	//val |= (WM8994_AIF1DAC1R_TO_DAC1R);
+	wm8994_write(codec, WM8994_DAC1_RIGHT_MIXER_ROUTING, val);
+
 	// 01H // SPKOUTL_ENA set
 	val = wm8994_read(codec, WM8994_POWER_MANAGEMENT_1);
 	val &= ~(WM8994_SPKOUTL_ENA_MASK|WM8994_VMID_SEL_MASK|WM8994_BIAS_ENA_MASK);
@@ -1756,7 +1771,7 @@ void wm8994_set_playback_speaker(struct snd_soc_codec *codec)
 
 void wm8994_set_playback_speaker_headset(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -1803,13 +1818,15 @@ void wm8994_set_playback_speaker_headset(struct snd_soc_codec *codec)
 	}
 
 	val = wm8994_read(codec, WM8994_SPKOUT_MIXERS);
-	val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTR_MASK);
+	val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|
+		WM8994_SPKMIXR_TO_SPKOUTR_MASK|WM8994_SPKMIXL_TO_SPKOUTR_MASK);
 	val |= (WM8994_SPKMIXL_TO_SPKOUTL);
 	wm8994_write(codec, WM8994_SPKOUT_MIXERS, val);
 
 	//Unmute the DAC path
 	val = wm8994_read(codec, WM8994_SPEAKER_MIXER);
-	val &= ~(WM8994_DAC1L_TO_SPKMIXL_MASK);
+	val &= ~(WM8994_MIXOUTL_TO_SPKMIXL_MASK|WM8994_MIXOUTR_TO_SPKMIXR_MASK|
+		WM8994_DAC1L_TO_SPKMIXL_MASK);
 	val |= (WM8994_DAC1L_TO_SPKMIXL);
 	wm8994_write(codec, WM8994_SPEAKER_MIXER, val);
 
@@ -1970,7 +1987,7 @@ void wm8994_set_playback_speaker_headset(struct snd_soc_codec *codec)
 
 void wm8994_set_playback_extra_dock_speaker(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -2111,7 +2128,7 @@ void wm8994_set_playback_extra_dock_speaker(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_receiver(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	int val;
 
@@ -2168,7 +2185,7 @@ void wm8994_set_voicecall_receiver(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_headset(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	int val;
 
@@ -2341,7 +2358,7 @@ void wm8994_set_voicecall_headset(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_headphone(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	int val;
 
@@ -2509,7 +2526,7 @@ void wm8994_set_voicecall_headphone(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_speaker(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	int val;
 
@@ -2612,7 +2629,8 @@ void wm8994_set_voicecall_speaker(struct snd_soc_codec *codec)
 	wm8994_write(codec, 0x36, 0x000C); // MIXOUTL/R_TO_SPKMIXL/R
 
 	val = wm8994_read(codec, WM8994_SPKOUT_MIXERS);
-	val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXL_TO_SPKOUTR_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTR_MASK);
+	val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|
+		WM8994_SPKMIXR_TO_SPKOUTR_MASK|WM8994_SPKMIXL_TO_SPKOUTR_MASK);
 	val |= (WM8994_SPKMIXL_TO_SPKOUTL|WM8994_SPKMIXR_TO_SPKOUTL); // SPKMIXL/R_TO_SPKOUTL On
 	wm8994_write(codec, WM8994_SPKOUT_MIXERS, val);
 	//~code add
@@ -2651,7 +2669,7 @@ void wm8994_set_voicecall_speaker(struct snd_soc_codec *codec)
 
 void wm8994_set_voicecall_bluetooth(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	int val;
 
@@ -2773,7 +2791,7 @@ void wm8994_set_voicecall_bluetooth(struct snd_soc_codec *codec)
 
 void close_output_path_all(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 	int val;
 
 	DEBUG_LOG("");
@@ -2838,6 +2856,7 @@ void close_output_path_all(struct snd_soc_codec *codec)
 	wm8994_write(codec, WM8994_AIF1_CONTROL_2, val);
 
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 	// 481H // 480H // AIF1_DAC1_EQ_GAIN clear
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_1, 0x6318);
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_2, 0x6300);
@@ -2846,7 +2865,7 @@ void close_output_path_all(struct snd_soc_codec *codec)
 
 void wm8994_set_voipcall_receiver(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -2900,6 +2919,7 @@ void wm8994_set_voipcall_receiver(struct snd_soc_codec *codec)
 	}
 
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 	// 481H // 480H // AIF1_DAC1_EQ_GAIN set
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_2, 0x9600); // 481H //
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_1, 0x0199); // 480H //
@@ -3013,6 +3033,7 @@ void wm8994_set_voipcall_receiver(struct snd_soc_codec *codec)
 	wm8994_write(codec, WM8994_INPUT_MIXER_2, val);
 
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 	/* DRC Sequence - RCV table // [DJ05-2239] // disable DRC and EQ */
 	wm8994_write(codec, WM8994_AIF1_DRC1_1, 0x0098); // 440h // DRC disable
 	wm8994_write(codec, WM8994_AIF1_DRC1_5, 0x0355); // 444h //
@@ -3046,7 +3067,7 @@ void wm8994_set_voipcall_receiver(struct snd_soc_codec *codec)
 
 void wm8994_set_voipcall_headset(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -3150,6 +3171,7 @@ void wm8994_set_voipcall_headset(struct snd_soc_codec *codec)
 	}
 
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 	// 481H // 480H // AIF1_DAC1_EQ_GAIN set
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_2, 0x9600); // 481H //
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_1, 0x0199); // 480H //
@@ -3280,6 +3302,7 @@ void wm8994_set_voipcall_headset(struct snd_soc_codec *codec)
 	wm8994_write(codec, WM8994_INPUT_MIXER_2, val);
 
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 	/* DRC Sequence - 4Pole table // [DJ05-2239] // disable DRC and EQ */
 	wm8994_write(codec, WM8994_AIF1_DRC1_1, 0x0098); // 440h // DRC disable
 	wm8994_write(codec, WM8994_AIF1_DRC1_5, 0x0355); // 444h //
@@ -3313,7 +3336,7 @@ void wm8994_set_voipcall_headset(struct snd_soc_codec *codec)
 
 void wm8994_set_voipcall_headphone(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -3417,6 +3440,7 @@ void wm8994_set_voipcall_headphone(struct snd_soc_codec *codec)
 	}
 
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 	// 481H // 480H // AIF1_DAC1_EQ_GAIN set
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_2, 0x9600); // 481H //
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_1, 0x0199); // 480H //
@@ -3547,6 +3571,7 @@ void wm8994_set_voipcall_headphone(struct snd_soc_codec *codec)
 	wm8994_write(codec, WM8994_INPUT_MIXER_2, val);
 
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 	/* DRC Sequence - 3Pole table // [DJ05-2239] // disable DRC and EQ */
 	wm8994_write(codec, WM8994_AIF1_DRC1_1, 0x0098); // 440h // DRC disable
 	wm8994_write(codec, WM8994_AIF1_DRC1_5, 0x0355); // 444h //
@@ -3580,7 +3605,7 @@ void wm8994_set_voipcall_headphone(struct snd_soc_codec *codec)
 
 void wm8994_set_voipcall_speaker(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 
@@ -3626,6 +3651,7 @@ void wm8994_set_voipcall_speaker(struct snd_soc_codec *codec)
 	}
 
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 	// 481H // 480H // AIF1_DAC1_EQ_GAIN set
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_2, 0x9600); // 481H //
 	wm8994_write(codec, WM8994_AIF1_DAC1_EQ_GAINS_1, 0x0199); // 480H //
@@ -3652,7 +3678,8 @@ void wm8994_set_voipcall_speaker(struct snd_soc_codec *codec)
 	}
 
 	val = wm8994_read(codec, WM8994_SPKOUT_MIXERS);
-	val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXL_TO_SPKOUTR_MASK|WM8994_SPKMIXR_TO_SPKOUTR_MASK);
+	val &= ~(WM8994_SPKMIXL_TO_SPKOUTL_MASK|WM8994_SPKMIXR_TO_SPKOUTL_MASK|
+		WM8994_SPKMIXR_TO_SPKOUTR_MASK|WM8994_SPKMIXL_TO_SPKOUTR_MASK);
 	val |= (WM8994_SPKMIXL_TO_SPKOUTL);
 	wm8994_write(codec, WM8994_SPKOUT_MIXERS, val);
 
@@ -3745,6 +3772,7 @@ void wm8994_set_voipcall_speaker(struct snd_soc_codec *codec)
 	wm8994_write(codec, WM8994_INPUT_MIXER_2, val);
 
 #ifdef FEATURE_VOIP_DRC
+	if this code enabled, build error
 	/* DRC Sequence - SPK table // [DJ05-2239] // disable DRC and EQ */
 	wm8994_write(codec, WM8994_AIF1_DRC1_1, 0x0098); // 440h // DRC disable
 	wm8994_write(codec, WM8994_AIF1_DRC1_5, 0x0355); // 444h //
@@ -3778,7 +3806,7 @@ void wm8994_set_voipcall_speaker(struct snd_soc_codec *codec)
 
 void wm8994_set_voipcall_bluetooth(struct snd_soc_codec *codec)
 {
-	struct wm8994_priv *wm8994 = codec->private_data;
+	struct wm8994_priv *wm8994 = codec->drvdata;
 
 	u16 val;
 

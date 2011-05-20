@@ -17,6 +17,7 @@
 #include <linux/workqueue.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
+#include <linux/gpio.h>
 
 #include <mach/gpio.h>
 //#include <mach/mux.h>
@@ -27,11 +28,12 @@
 
 #include <linux/time.h>
 #include <linux/timer.h>
-#include <linux/i2c/twl4030.h>
 
 #include <plat/gpio-cfg.h>
-#include <mach/regs-gpio.h> // #include <mach/gpio-aries.h>    //#include <plat/regs-gpio.h>
+#include <mach/gpio-aries.h>    //#include <plat/regs-gpio.h>
 //#include <plat/gpio-bank-h3.h>
+
+#include <mach/cpu-freq-v210.h>
 
 #include "tdmb.h"
 
@@ -203,6 +205,7 @@ void TDMB_drv_Enable()
 
 int TDMB_PowerOn(void)
 {
+    s5pv210_lock_dvfs_high_level(DVFS_LOCK_TOKEN_4, L3);
 #ifdef CONFIG_TDMB_T3700
 	DPRINTK("call TDMB_PowerOn ! \n");
  	TDMB_drv_Init();
@@ -318,6 +321,7 @@ void TDMB_PowerOff(void)
 {
 	DPRINTK("call TDMB_PowerOff ! \n");
 	g_TDMBGlobal.b_isTDMB_Enable = 0; 
+	s5pv210_unlock_dvfs_high_level(DVFS_LOCK_TOKEN_4);
 #ifdef CONFIG_TDMB_T3700
     INC_STOP(TDMB_ID_0x80);
 #endif

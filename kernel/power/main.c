@@ -12,42 +12,26 @@
 #include <linux/string.h>
 #include <linux/resume-trace.h>
 #include <linux/workqueue.h>
-#include <linux/wakelock.h>
-//#ifdef CONFIG_CPU_FREQ
+
+#ifdef CONFIG_DVFS_LIMIT
 #include <mach/cpu-freq-v210.h>
-//#endif
+#endif
+
 #include "power.h"
-
-
-static void do_dvfsunlock_timer(struct work_struct *work);
-static DEFINE_MUTEX (dvfslock_ctrl_mutex);
-static DECLARE_DELAYED_WORK(dvfslock_crtl_unlock_work, do_dvfsunlock_timer);
-
 
 DEFINE_MUTEX(pm_mutex);
 
 unsigned int pm_flags;
 EXPORT_SYMBOL(pm_flags);
 
-#if 1	// added by peres to show valid current state
-suspend_state_t global_state;
-#endif
-
-#ifndef FEATURE_FTM_SLEEP
-#define FEATURE_FTM_SLEEP
-#endif
-
-#ifdef FEATURE_FTM_SLEEP
+#ifdef CONFIG_FTM_SLEEP
+#include <linux/fsa9480.h>
 unsigned char ftm_sleep = 0;
 EXPORT_SYMBOL(ftm_sleep);
-extern unsigned char ftm_sleep_exit;
 
-void (*ftm_enable_usb_sw)(int mode);
-EXPORT_SYMBOL(ftm_enable_usb_sw);
+extern void fsa9480_manual_switching(int path);
 
 extern void wakelock_force_suspend(void);
-
-static struct wake_lock ftm_wake_lock;
 #endif
 
 #ifdef CONFIG_PM_SLEEP
@@ -73,6 +57,32 @@ int pm_notifier_call_chain(unsigned long val)
 	return (blocking_notifier_call_chain(&pm_chain_head, val, NULL)
 			== NOTIFY_BAD) ? -EINVAL : 0;
 }
+
+/* If set, devices may be suspended and resumed asynchronously. */
+int pm_async_enabled = 1;
+
+static ssize_t pm_async_show(struct kobject *kobj, struct kobj_attribute *attr,
+			     char *buf)
+{
+	return sprintf(buf, "%d\n", pm_async_enabled);
+}
+
+static ssize_t pm_async_store(struct kobject *kobj, struct kobj_attribute *attr,
+			      const char *buf, size_t n)
+{
+	unsigned long val;
+
+	if (strict_strtoul(buf, 10, &val))
+		return -EINVAL;
+
+	if (val > 1)
+		return -EINVAL;
+
+	pm_async_enabled = val;
+	return n;
+}
+
+power_attr(pm_async);
 
 #ifdef CONFIG_PM_DEBUG
 int pm_test_level = TEST_NONE;
@@ -139,83 +149,6 @@ power_attr(pm_test);
 
 #endif /* CONFIG_PM_SLEEP */
 
-
-
-/**
- * store_dvfslock_ctrl - make dvfs lock through application
- */
-extern int g_dbs_timer_started;
-int dvfsctrl_locked;
-int gdDvfsctrl = 0;
-static ssize_t dvfslock_ctrl(const char *buf, size_t count)
-{
-	unsigned int ret = -EINVAL;
-	int dlevel;
-	int dtime_msec;
-
-	//mutex_lock(&dvfslock_ctrl_mutex);
-	ret = sscanf(buf, "%u", &gdDvfsctrl);
-	if (ret != 1)
-		return -EINVAL;
-	
-	if (!g_dbs_timer_started)	 return -EINVAL;
-	if (gdDvfsctrl == 0) {
-		if (dvfsctrl_locked) {
-			s5pc110_unlock_dvfs_high_level(DVFS_LOCK_TOKEN_6);
-			dvfsctrl_locked = 0;
-			return -EINVAL;		
-		} else {
-			return -EINVAL;		
-		}
-	}
-	
-	if (dvfsctrl_locked) return 0;
-		
-	dlevel = gdDvfsctrl & 0xffff0000;
-	dtime_msec = gdDvfsctrl & 0x0000ffff;
-	if (dtime_msec <16) dtime_msec=16;
-	
-	if (dtime_msec  == 0) return -EINVAL;
-	if(dlevel) dlevel = LEV_800MHZ;
-	else dlevel = LEV_1000MHZ;
-	
-	printk("+++++DBG dvfs lock level=%d, time=%d, scanVal=%08x\n",dlevel,dtime_msec, gdDvfsctrl);
-	s5pc110_lock_dvfs_high_level(DVFS_LOCK_TOKEN_6, dlevel);
-	dvfsctrl_locked=1;
-
-
-	schedule_delayed_work(&dvfslock_crtl_unlock_work, dtime_msec);
-
-	//mutex_unlock(&dvfslock_ctrl_mutex);
-
-	return -EINVAL;
-}
-
-static void do_dvfsunlock_timer(struct work_struct *work) {
-	//printk("----DBG dvfs unlock\n");
-	dvfsctrl_locked = 0;	
-	s5pc110_unlock_dvfs_high_level(DVFS_LOCK_TOKEN_6);
-}
-
-
-ssize_t dvfslock_ctrl_show(
-	struct kobject *kobj, struct kobj_attribute *attr, char *buf)
-{
-	return sprintf(buf, "0x%08x\n", gdDvfsctrl);
-
-}
-
-ssize_t dvfslock_ctrl_store(
-	struct kobject *kobj, struct kobj_attribute *attr,
-	const char *buf, size_t n)
-{
-	dvfslock_ctrl(buf, 0);
-	return n;
-}
-
-
-
-
 struct kobject *power_kobj;
 
 /**
@@ -253,9 +186,6 @@ static ssize_t state_show(struct kobject *kobj, struct kobj_attribute *attr,
 static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 			   const char *buf, size_t n)
 {
-#if 1	// added by peres to show valid current state
-	char *b = buf;
-#endif
 #ifdef CONFIG_SUSPEND
 #ifdef CONFIG_EARLYSUSPEND
 	suspend_state_t state = PM_SUSPEND_ON;
@@ -282,60 +212,31 @@ static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 		if (*s && len == strlen(*s) && !strncmp(buf, *s, len))
 			break;
 	}
-
-	if (state < PM_SUSPEND_MAX && *s) {
-		printk(KERN_DEBUG "%s: state:%d (%s)\n", __func__, state, *s);
+	if (state < PM_SUSPEND_MAX && *s)
 #ifdef CONFIG_EARLYSUSPEND
 		if (state == PM_SUSPEND_ON || valid_state(state)) {
-#if 1	// added by peres to show valid current state
-			if(state == PM_SUSPEND_ON) {
-#ifdef FEATURE_FTM_SLEEP
-				if ((ftm_sleep == 1)&& (ftm_sleep_exit == 1)) {
-					pr_info("%s: wake lock for FTM\n", __func__);
-					ftm_sleep = 0;
-					ftm_sleep_exit = 0;
-					wake_lock_timeout(&ftm_wake_lock, 60 * HZ);
-					if (ftm_enable_usb_sw)
-						ftm_enable_usb_sw(1);
-				}
-#endif
-				sprintf(b,"%s ", pm_states[PM_SUSPEND_ON]);
-				global_state = PM_SUSPEND_ON;
-			} else {
-#ifdef FEATURE_FTM_SLEEP
-				if ((ftm_sleep == 1) && (ftm_sleep_exit == 0)){ // when ftm sleep cmd 
-					printk("%s: FTM Sleep Cmd\n", __func__);
-					if (ftm_enable_usb_sw)
-						ftm_enable_usb_sw(0);
-				}
+#ifdef CONFIG_FTM_SLEEP
+			if(state == PM_SUSPEND_ON){
 
-				if ((ftm_sleep == 1) && (ftm_sleep_exit == 1))
-				{
-					printk("%s: FTM exit error case\n",__func__);
-					ftm_sleep = 0;
-					ftm_sleep_exit = 0;
-					wake_lock_timeout(&ftm_wake_lock, 60 * HZ);
-					if (ftm_enable_usb_sw)
-						ftm_enable_usb_sw(1);
+			}else{
+				if (ftm_sleep == 1){ // when ftm sleep cmd 
+					printk("%s: FTM Sleep Cmd\n", __func__);
+					fsa9480_manual_switching(SWITCH_PORT_ALL_OPEN);
 				}
-#endif
-				sprintf(b,"%s ", pm_states[PM_SUSPEND_MEM]);
-				global_state = PM_SUSPEND_MEM;
 			}
 #endif
 			error = 0;
 			request_suspend_state(state);
-
-#ifdef FEATURE_FTM_SLEEP
-			if (ftm_sleep && global_state == PM_SUSPEND_MEM && ftm_sleep_exit == 0) {
+#ifdef CONFIG_FTM_SLEEP
+			if (ftm_sleep && state == PM_SUSPEND_MEM) {
+				printk(KERN_DEBUG "%s: ftm force sleep \n", __func__);
 				wakelock_force_suspend();
 			}
-#endif /* FEATURE_FTM_SLEEP */
+#endif
 		}
 #else
 		error = enter_state(state);
 #endif
-	}
 #endif
 
  Exit:
@@ -344,8 +245,7 @@ static ssize_t state_store(struct kobject *kobj, struct kobj_attribute *attr,
 
 power_attr(state);
 
-#ifdef FEATURE_FTM_SLEEP /* for Factory Sleep cmd check */
-
+#ifdef CONFIG_FTM_SLEEP /* for Factory Sleep cmd check */
 
 #define ftm_attr(_name) \
 static struct kobj_attribute _name##_attr = {	\
@@ -397,7 +297,6 @@ static ssize_t ftm_sleep_store(struct kobject *kobj, struct kobj_attribute *attr
 ftm_attr(ftm_sleep);
 #endif /* FEATURE_FTM_SLEEP */
 
-
 #ifdef CONFIG_PM_TRACE
 int pm_trace_enabled;
 
@@ -427,22 +326,108 @@ power_attr(pm_trace);
 power_attr(wake_lock);
 power_attr(wake_unlock);
 #endif
+
+
+#ifdef CONFIG_DVFS_LIMIT
+//extern int g_dbs_timer_started;
+static int dvfsctrl_locked = 0;
+static int gdDvfsctrl = 0;
+
+static void do_dvfsunlock_timer(struct work_struct *work);
+//static DEFINE_MUTEX (dvfslock_ctrl_mutex);
+static DECLARE_DELAYED_WORK(dvfslock_crtl_unlock_work, do_dvfsunlock_timer);
+
+static ssize_t dvfslock_ctrl(const char *buf, size_t count)
+{
+	unsigned int ret = -EINVAL;
+	int dlevel;
+	int dtime_msec;
+
+	//mutex_lock(&dvfslock_ctrl_mutex);
+	ret = sscanf(buf, "%u", &gdDvfsctrl);
+	if (ret != 1)
+		return -EINVAL;
+
+	//if (!g_dbs_timer_started) return -EINVAL;
+	if (gdDvfsctrl == 0) {
+		if (dvfsctrl_locked) {
+			s5pv210_unlock_dvfs_high_level(DVFS_LOCK_TOKEN_6);
+			dvfsctrl_locked = 0;
+		}
+		return -EINVAL;
+	}
+
+	if (dvfsctrl_locked)
+		return 0;
+
+	dlevel = gdDvfsctrl & 0xffff0000;
+	dtime_msec = gdDvfsctrl & 0x0000ffff;
+
+	if (dtime_msec < 16)
+		dtime_msec = 16;
+	if (dtime_msec  == 0)
+		return -EINVAL;
+
+	if (dlevel)
+		dlevel = L1;
+	else
+		dlevel = L0;
+
+	printk(KERN_DEBUG "%s : level=%d, time=%d\n", __func__, dlevel, dtime_msec);
+
+	s5pv210_lock_dvfs_high_level(DVFS_LOCK_TOKEN_6, dlevel);
+	dvfsctrl_locked = 1;
+
+	schedule_delayed_work(&dvfslock_crtl_unlock_work, msecs_to_jiffies(dtime_msec));
+
+	//mutex_unlock(&dvfslock_ctrl_mutex);
+
+	return -EINVAL;
+}
+
+static void do_dvfsunlock_timer(struct work_struct *work)
+{
+	dvfsctrl_locked = 0;	
+	s5pv210_unlock_dvfs_high_level(DVFS_LOCK_TOKEN_6);
+}
+
+static ssize_t dvfslock_ctrl_show(struct kobject *kobj,
+				  struct kobj_attribute *attr, char *buf)
+{
+	return sprintf(buf, "0x%08x\n", gdDvfsctrl);
+}
+
+static ssize_t dvfslock_ctrl_store(struct kobject *kobj, struct kobj_attribute *attr,
+				   const char *buf, size_t n)
+{
+	dvfslock_ctrl(buf, 0);
+	return n;
+}
+
 power_attr(dvfslock_ctrl);
+#endif
 
 static struct attribute * g[] = {
 	&state_attr.attr,
 #ifdef CONFIG_PM_TRACE
 	&pm_trace_attr.attr,
 #endif
-#if defined(CONFIG_PM_SLEEP) && defined(CONFIG_PM_DEBUG)
+#ifdef CONFIG_PM_SLEEP
+	&pm_async_attr.attr,
+#ifdef CONFIG_PM_DEBUG
 	&pm_test_attr.attr,
 #endif
 #ifdef CONFIG_USER_WAKELOCK
 	&wake_lock_attr.attr,
 	&wake_unlock_attr.attr,
 #endif
-	&ftm_sleep_attr.attr,
+#endif
+#ifdef CONFIG_DVFS_LIMIT
 	&dvfslock_ctrl_attr.attr,
+#endif
+#ifdef CONFIG_FTM_SLEEP
+	&ftm_sleep_attr.attr,
+#endif
 	NULL,
 };
 
@@ -452,6 +437,7 @@ static struct attribute_group attr_group = {
 
 #ifdef CONFIG_PM_RUNTIME
 struct workqueue_struct *pm_wq;
+EXPORT_SYMBOL_GPL(pm_wq);
 
 static int __init pm_start_workqueue(void)
 {
@@ -471,10 +457,6 @@ static int __init pm_init(void)
 	power_kobj = kobject_create_and_add("power", NULL);
 	if (!power_kobj)
 		return -ENOMEM;
-
-	
-	wake_lock_init(&ftm_wake_lock, WAKE_LOCK_SUSPEND, "ftm_wake_lock");
-
 	return sysfs_create_group(power_kobj, &attr_group);
 }
 

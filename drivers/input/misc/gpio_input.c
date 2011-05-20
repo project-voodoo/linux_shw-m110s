@@ -19,6 +19,7 @@
 #include <linux/hrtimer.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
+#include <linux/slab.h>
 #include <linux/wakelock.h>
 
 enum {
@@ -62,6 +63,8 @@ static enum hrtimer_restart gpio_event_input_timer_func(struct hrtimer *timer)
 	unsigned long irqflags;
 	uint8_t debounce;
 
+extern void TSP_forced_release_forOKkey(void);
+
 #if 0
 	key_entry = kp->keys_info->keymap;
 	key_state = kp->key_state;
@@ -79,10 +82,10 @@ static enum hrtimer_restart gpio_event_input_timer_func(struct hrtimer *timer)
 		if (key_state->debounce & DEBOUNCE_UNSTABLE) {
 			debounce = key_state->debounce = DEBOUNCE_UNKNOWN;
 			enable_irq(gpio_to_irq(key_entry->gpio));
-			pr_info("gpio_keys_scan_keys: key %x-%x, %d "
+/*			pr_info("gpio_keys_scan_keys: key %x-%x, %d "
 				"(%d) continue debounce\n",
 				ds->info->type, key_entry->code,
-				i, key_entry->gpio);
+				i, key_entry->gpio);*/
 		}
 		npolarity = !(gpio_flags & GPIOEDF_ACTIVE_HIGH);
 		pressed = gpio_get_value(key_entry->gpio) ^ npolarity;
@@ -126,6 +129,12 @@ static enum hrtimer_restart gpio_event_input_timer_func(struct hrtimer *timer)
 			pr_info("gpio_keys_scan_keys: key %x-%x, %d (%d) "
 				"changed to %d\n", ds->info->type,
 				key_entry->code, i, key_entry->gpio, pressed);
+		if(ds->info->type == EV_KEY)
+		{
+//			printk(KERN_DEBUG "EV_KEY - scancode : %d, pressed : %d\n", key_entry->code, pressed);
+			if(pressed && (key_entry->code == 102))//if home key pressed
+				TSP_forced_release_forOKkey();
+		}
 		input_event(ds->input_devs->dev[key_entry->dev], ds->info->type,
 			    key_entry->code, pressed);
 	}
@@ -218,13 +227,25 @@ static int gpio_event_input_request_irqs(struct gpio_input_state *ds)
 				ds->info->keymap[i].gpio, irq);
 			goto err_request_irq_failed;
 		}
-		enable_irq_wake(irq);
+		if (ds->info->info.no_suspend) {
+			err = enable_irq_wake(irq);
+			if (err) {
+				pr_err("gpio_event_input_request_irqs: "
+					"enable_irq_wake failed for input %d, "
+					"irq %d\n",
+					ds->info->keymap[i].gpio, irq);
+				goto err_enable_irq_wake_failed;
+			}
+		}
 	}
 	return 0;
 
 	for (i = ds->info->keymap_size - 1; i >= 0; i--) {
-		free_irq(gpio_to_irq(ds->info->keymap[i].gpio),
-			 &ds->key_state[i]);
+		irq = gpio_to_irq(ds->info->keymap[i].gpio);
+		if (ds->info->info.no_suspend)
+			disable_irq_wake(irq);
+err_enable_irq_wake_failed:
+		free_irq(irq, &ds->key_state[i]);
 err_request_irq_failed:
 err_gpio_get_irq_num_failed:
 		;
@@ -332,8 +353,10 @@ int gpio_event_input_func(struct gpio_event_input_devs *input_devs,
 	hrtimer_cancel(&ds->timer);
 	if (ds->use_irq) {
 		for (i = di->keymap_size - 1; i >= 0; i--) {
-			free_irq(gpio_to_irq(di->keymap[i].gpio),
-				 &ds->key_state[i]);
+			int irq = gpio_to_irq(di->keymap[i].gpio);
+			if (ds->info->info.no_suspend)
+				disable_irq_wake(irq);
+			free_irq(irq, &ds->key_state[i]);
 		}
 	}
 	spin_unlock_irqrestore(&ds->irq_lock, irqflags);

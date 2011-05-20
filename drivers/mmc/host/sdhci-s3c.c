@@ -15,10 +15,12 @@
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/platform_device.h>
+#include <linux/slab.h>
 #include <linux/clk.h>
 #include <linux/io.h>
 
 #include <linux/mmc/host.h>
+#include <linux/mmc/card.h>
 
 #include <plat/sdhci.h>
 #include <plat/regs-sdhci.h>
@@ -47,7 +49,7 @@ static unsigned int	card_status = 0;
 
 #define SEC_SDHCI_ATTR(_name)								\
 {															\
-        .attr = { .name = #_name, .mode = S_IRUGO | S_IWUGO, .owner = THIS_MODULE },	\
+        .attr = { .name = #_name, .mode = S_IRUGO | S_IWUSR |S_IWGRP, .owner = THIS_MODULE },	\
         .show = sdhci_s3c_show_property,					\
         .store = sdhci_s3c_store,							\
 }
@@ -308,7 +310,7 @@ static void sdhci_s3c_set_clock(struct sdhci_host *host, unsigned int clock)
 
 		ourhost->cur_clk = best_src;
 		host->max_clk = clk_get_rate(clk);
-		//host->timeout_clk = sdhci_s3c_get_timeout_clk(host);
+		host->timeout_clk = sdhci_s3c_get_timeout_clk(host);
 
 		ctrl = readl(host->ioaddr + S3C_SDHCI_CONTROL2);
 		ctrl &= ~S3C_SDHCI_CTRL2_SELBASECLK_MASK;
@@ -342,7 +344,7 @@ static int sdhci_s3c_get_cd(struct sdhci_host *host)
 	return detect;
 }
 
-static int sdhci_s3c_adjust_cfg(struct sdhci_host *host, int rw)
+static void sdhci_s3c_adjust_cfg(struct sdhci_host *host, int rw)
 {
 	struct sdhci_s3c *ourhost = to_s3c(host);
 	struct s3c_sdhci_platdata *pdata = ourhost->pdata;
@@ -369,17 +371,18 @@ void sdhci_s3c_force_presence_change(struct platform_device *pdev)
 	struct sdhci_host *host = platform_get_drvdata(pdev);
 
 	printk(KERN_DEBUG "%s : Enter\n",__FUNCTION__);
-	mmc_detect_change(host->mmc, msecs_to_jiffies(200));
+	mmc_detect_change(host->mmc, msecs_to_jiffies(60));
 }
 EXPORT_SYMBOL_GPL(sdhci_s3c_force_presence_change);
 
 irqreturn_t sdhci_irq_cd(int irq, void *dev_id)
 {
 	struct sdhci_s3c* sc = dev_id;
+	uint detect;
 
 	printk(KERN_DEBUG "sdhci: card interrupt.\n");
 
-	uint detect = sc->pdata->detect_ext_cd();
+	detect = sc->pdata->detect_ext_cd();
 
     // 2010.04.19 dukho.kim 
     // factory test for checking wheather externel card is mounted or unmounted
@@ -508,8 +511,7 @@ static int __devinit sdhci_s3c_probe(struct platform_device *pdev)
 	/* Setup quirks for the controller */
 	host->quirks |= SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC;
 	host->quirks |= SDHCI_QUIRK_BROKEN_CARD_PRESENT_BIT;
-	//host->quirks |= SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
-	host->quirks |= SDHCI_QUIRK_DATA_TIMEOUT_USES_SDCLK;
+	host->quirks |= SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
 
 #ifndef CONFIG_MMC_SDHCI_S3C_DMA
 
@@ -536,6 +538,11 @@ static int __devinit sdhci_s3c_probe(struct platform_device *pdev)
 		host->mmc->caps = pdata->host_caps;
 	else
 		host->mmc->caps = 0;
+
+	/* Set pm_flags for built_in device */
+	host->mmc->pm_caps = MMC_PM_KEEP_POWER | MMC_PM_IGNORE_PM_NOTIFY;
+	if (pdata->built_in)
+		host->mmc->pm_flags = MMC_PM_KEEP_POWER | MMC_PM_IGNORE_PM_NOTIFY;
 
 	/* to add external irq as a card detect signal */
 	if (pdata->cfg_ext_cd) {
@@ -571,8 +578,10 @@ static int __devinit sdhci_s3c_probe(struct platform_device *pdev)
 
  err_req_regs:
 	for (ptr = 0; ptr < MAX_BUS_CLK; ptr++) {
-		clk_disable(sc->clk_bus[ptr]);
-		clk_put(sc->clk_bus[ptr]);
+		if (sc->clk_bus[ptr]) {
+			clk_disable(sc->clk_bus[ptr]);
+			clk_put(sc->clk_bus[ptr]);
+		}
 	}
 
  err_no_busclks:
@@ -601,9 +610,11 @@ static int __devexit sdhci_s3c_remove(struct platform_device *pdev)
 
 	sdhci_remove_host(host, dead);
 
-	for (ptr = 0; ptr < 3; ptr++) {
-		clk_disable(sc->clk_bus[ptr]);
-		clk_put(sc->clk_bus[ptr]);
+	for (ptr = 0; ptr < MAX_BUS_CLK; ptr++) {
+		if (sc->clk_bus[ptr]) {
+			clk_disable(sc->clk_bus[ptr]);
+			clk_put(sc->clk_bus[ptr]);
+		}
 	}
 	clk_disable(sc->clk_io);
 	clk_put(sc->clk_io);
@@ -618,25 +629,17 @@ static int __devexit sdhci_s3c_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static int sdhci_s3c_shutdown(struct platform_device *pdev)
-{
-	struct sdhci_host *host =  platform_get_drvdata(pdev);
-	struct sdhci_s3c *sc = sdhci_priv(host);
-
-	if(sc->pdata && sc->pdata->cfg_ext_cd)
-	{
-		free_irq(sc->pdata->ext_cd, sc);
-	}
-
-	return 0;
-}
-
 #ifdef CONFIG_PM
 
 static int sdhci_s3c_suspend(struct platform_device *dev, pm_message_t pm)
 {
 	struct sdhci_host *host = platform_get_drvdata(dev);
 	struct s3c_sdhci_platdata *pdata = dev->dev.platform_data;
+
+	struct mmc_host *mmc = host->mmc;
+
+	if (mmc->card && (mmc->card->type == MMC_TYPE_SDIO))
+		mmc->pm_flags |= MMC_PM_KEEP_POWER;
 
 	sdhci_suspend_host(host, pm);
 
@@ -672,8 +675,7 @@ static struct platform_driver sdhci_s3c_driver = {
 	.probe		= sdhci_s3c_probe,
 	.remove		= __devexit_p(sdhci_s3c_remove),
 	.suspend	= sdhci_s3c_suspend,
-	.resume		= sdhci_s3c_resume,
-	.shutdown	= sdhci_s3c_shutdown,
+	.resume	        = sdhci_s3c_resume,
 	.driver		= {
 		.owner	= THIS_MODULE,
 		.name	= "s3c-sdhci",

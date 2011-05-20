@@ -711,13 +711,11 @@ int s3cfb_set_chroma_key(struct s3cfb_global *ctrl, int id)
 		dev_err(ctrl->dev, "[fb%d] does not support chroma key\n", id);
 		return -EINVAL;
 	}
-	cfg = readl(ctrl->regs + S3C_KEYCON(id));
-	cfg |= (S3C_KEYCON0_KEYBLEN_DISABLE | S3C_KEYCON0_DIRCON_MATCH_FG);
+
+	cfg = (S3C_KEYCON0_KEYBLEN_DISABLE | S3C_KEYCON0_DIRCON_MATCH_FG);
 
 	if (chroma->enabled)
 		cfg |= S3C_KEYCON0_KEY_ENABLE;
-	else
-		cfg &= S3C_KEYCON0_KEY_DISABLE;
 
 	writel(cfg, ctrl->regs + S3C_KEYCON(id));
 
@@ -729,15 +727,4 @@ int s3cfb_set_chroma_key(struct s3cfb_global *ctrl, int id)
 
 	return 0;
 }
-
-int s3cfb_get_offset(struct s3cfb_global* ctrl, int id)
-{
-	struct fb_fix_screeninfo *fix = &ctrl->fb[id]->fix;
-	u32 fbaddr;
-	u32 offset;
-	fbaddr = readl(ctrl->regs + S3C_VIDADDR_START0(0));
-	offset = fbaddr - fix->smem_start;
-	return offset;
-}
-
 

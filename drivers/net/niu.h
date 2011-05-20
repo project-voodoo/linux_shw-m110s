@@ -268,7 +268,7 @@
 #define  XMAC_MIN_RX_MIN_PKT_SIZE_SHFT	20
 #define  XMAC_MIN_SLOT_TIME		0x000000000003fc00ULL
 #define  XMAC_MIN_SLOT_TIME_SHFT	10
-#define  XMAC_MIN_TX_MIN_PKT_SIZE	0x00000000000003ffULL
+#define  XMAC_MIN_TX_MIN_QKT_SIZE	0x00000000000003ffULL
 #define  XMAC_MIN_TX_MIN_PKT_SIZE_SHFT	0
 
 #define XMAC_MAX			0x00090UL
@@ -2706,7 +2706,7 @@ struct rx_pkt_hdr0 {
 #if defined(__LITTLE_ENDIAN_BITFIELD)
 	u8	inputport:2,
 		maccheck:1,
-		class:4;
+		class:5;
 	u8	vlan:1,
 		llcsnap:1,
 		noport:1,
@@ -2715,7 +2715,7 @@ struct rx_pkt_hdr0 {
 		tres:2,
 		tzfvld:1;
 #elif defined(__BIG_ENDIAN_BITFIELD)
-	u8	class:4,
+	u8	class:5,
 		maccheck:1,
 		inputport:2;
 	u8	tzfvld:1,
@@ -2774,6 +2774,9 @@ struct rx_pkt_hdr1 {
 
 	/* Bits 7:0 of hash value, H1.  */
 	u8	hashval1_2;
+
+	u8	hwrsvd5;
+	u8	hwrsvd6;
 
 	u8	usrdata_0;	/* Bits 39:32 of user data.  */
 	u8	usrdata_1;	/* Bits 31:24 of user data.  */

@@ -18,12 +18,12 @@
 /* #define VERBOSE_DEBUG */
 
 #include <linux/kernel.h>
-#include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/device.h>
 #include <linux/delay.h>
 #include <linux/tty.h>
 #include <linux/tty_flip.h>
+#include <linux/slab.h>
 
 #include "u_serial.h"
 
@@ -53,8 +53,7 @@
  * is managed in userspace ... OBEX, PTP, and MTP have been mentioned.
  */
 
-//#define PREFIX	"ttyGS"
-#define PREFIX	"ttygs"
+#define PREFIX	"ttyGS"
 
 /*
  * gserial is the lifecycle interface, used by USB functions
@@ -130,8 +129,8 @@ static unsigned	n_ports;
 #define ACM_ZLP		1
 
 #if ACM_ZLP
-static int s3c_multiple = 0;
-static int s3c_need_zlp = 0;
+static int gs_multiple = 0;
+static int gs_need_zlp = 0;
 #endif
 
 #ifdef VERBOSE_DEBUG
@@ -141,6 +140,7 @@ static int s3c_need_zlp = 0;
 #define pr_vdebug(fmt, arg...) \
 	({ if (0) pr_debug(fmt, ##arg); })
 #endif
+
 /*-------------------------------------------------------------------------*/
 
 /* Circular Buffer */
@@ -369,19 +369,18 @@ __acquires(&port->port_lock)
 
 		req = list_entry(pool->next, struct usb_request, list);
 		len = gs_send_packet(port, req->buf, in->maxpacket);
-
 #if ACM_ZLP
 		if (len == 0) {
 			//printk("[%s] len == 0 ;\n", __func__);
-			if (s3c_need_zlp == 0) {
+			if (gs_need_zlp == 0) {
 				req->zero = 0;
-				wake_up_interruptible(&port->drain_wait);
-				break;
+			wake_up_interruptible(&port->drain_wait);
+			break;
 			} else {
 				//printk("[%s] zlp: => req.zero = true ;\n", __func__);
 				req->zero = 1;
-				s3c_need_zlp = 0;
-				s3c_multiple = 0;
+				gs_need_zlp = 0;
+				gs_multiple = 0;
 			}
 		}
 #else
@@ -394,6 +393,7 @@ __acquires(&port->port_lock)
 
 		req->length = len;
 		list_del(&req->list);
+		req->zero = (gs_buf_data_avail(&port->port_write_buf) == 0);
 
 		pr_vdebug(PREFIX "%d: tx len=%d, 0x%02x 0x%02x 0x%02x ...\n",
 				port->port_num, len, *((u8 *)req->buf),
@@ -557,17 +557,11 @@ recycle:
 		list_move(&req->list, &port->read_pool);
 	}
 
-	/* Push from tty to ldisc; this is immediate with low_latency, and
-	 * may trigger callbacks to this driver ... so drop the spinlock.
+	/* Push from tty to ldisc; without low_latency set this is handled by
+	 * a workqueue, so we won't get callbacks and can hold port_lock
 	 */
 	if (tty && do_push) {
-		spin_unlock_irq(&port->port_lock);
 		tty_flip_buffer_push(tty);
-		wake_up_interruptible(&tty->read_wait);
-		spin_lock_irq(&port->port_lock);
-
-		/* tty may have been closed */
-		tty = port->port_tty;
 	}
 
 
@@ -805,17 +799,6 @@ static int gs_open(struct tty_struct *tty, struct file *file)
 	port->open_count = 1;
 	port->openclose = false;
 
-#if defined(USB_G_SERIAL_LOW_LATENCY)
-	/* this setting make kernel bug below
-	  * BUG: sleeping function called from invalid context at kernel/mutex.c 
-	  */
-	  
-	/* low_latency means ldiscs work in tasklet context, without
-	 * needing a workqueue schedule ... easier to keep up.
-	 */
-	tty->low_latency = 1;
-#endif
-
 	/* if connected, start the I/O stream */
 	if (port->port_usb) {
 		struct gserial	*gser = port->port_usb;
@@ -848,37 +831,9 @@ static int gs_writes_finished(struct gs_port *p)
 	return cond;
 }
 
-static int gs_chars_in_buffer(struct tty_struct *tty)
-{
-	struct gs_port	*port = tty->driver_data;
-	unsigned long	flags;
-	int		chars = 0;
-
-	spin_lock_irqsave(&port->port_lock, flags);
-	chars = gs_buf_data_avail(&port->port_write_buf);
-	spin_unlock_irqrestore(&port->port_lock, flags);
-
-//	printk("[%s] gs_chars_in_buffer: (%d,%p) chars=%d\n", __func__, 
-//		port->port_num, tty, chars);
-
 #if ACM_ZLP
-	if (chars == 0 && s3c_multiple == 1) {
-
-		if (port->port_usb) {
-			int status;
-			//printk("%s: Need zlp.....\n", __func__);
-			s3c_need_zlp = 1;
-
-			spin_lock_irqsave(&port->port_lock, flags);
-			status = gs_start_tx(port);
-			spin_unlock_irqrestore(&port->port_lock, flags);
-		}
-	}
+static int gs_chars_in_buffer(struct tty_struct *tty);
 #endif
-
-	return chars;
-}
-
 
 static void gs_close(struct tty_struct *tty, struct file *file)
 {
@@ -886,10 +841,7 @@ static void gs_close(struct tty_struct *tty, struct file *file)
 	struct gserial	*gser;
 
 #if ACM_ZLP
-	//int ret = gs_chars_in_buffer(tty);
-//	printk("[%s] gs_chars_in_buffer: %d\n", __func__, ret);
-	gs_chars_in_buffer(tty);
-
+	(void)gs_chars_in_buffer(tty);
 #endif
 
 	spin_lock_irq(&port->port_lock);
@@ -957,22 +909,22 @@ static int gs_write(struct tty_struct *tty, const unsigned char *buf, int count)
 	struct usb_ep	*in;
 #endif
 
+
 	pr_vdebug("gs_write: ttyGS%d (%p) writing %d bytes\n",
 			port->port_num, tty, count);
 
 	spin_lock_irqsave(&port->port_lock, flags);
 	if (count)
 		count = gs_buf_put(&port->port_write_buf, buf, count);
-
 #if ACM_ZLP
 	if (port->port_usb) {
-	in = port->port_usb->in;
+		in = port->port_usb->in;
 
-	s3c_multiple = 0;
-	if ( count != 0 && (count % in->maxpacket == 0)) {
-		s3c_multiple = 1;
-		s3c_need_zlp = 1;
-	}
+		gs_multiple = 0;
+		if ( count != 0 && (count % in->maxpacket == 0)) {
+			gs_multiple = 1;
+			gs_need_zlp = 1;
+		}
 	}
 #endif
 	/* treat count == 0 as flush_chars() */
@@ -1027,6 +979,35 @@ static int gs_write_room(struct tty_struct *tty)
 		port->port_num, tty, room);
 
 	return room;
+}
+
+static int gs_chars_in_buffer(struct tty_struct *tty)
+{
+	struct gs_port	*port = tty->driver_data;
+	unsigned long	flags;
+	int		chars = 0;
+
+	spin_lock_irqsave(&port->port_lock, flags);
+	chars = gs_buf_data_avail(&port->port_write_buf);
+	spin_unlock_irqrestore(&port->port_lock, flags);
+
+	pr_vdebug("gs_chars_in_buffer: (%d,%p) chars=%d\n",
+		port->port_num, tty, chars);
+
+#if ACM_ZLP
+	if (chars == 0 && gs_multiple == 1) {
+		if (port->port_usb) {
+			//printk("%s: Need zlp.....\n", __func__);
+			gs_need_zlp = 1;
+
+			spin_lock_irqsave(&port->port_lock, flags);
+			(void)gs_start_tx(port);
+			spin_unlock_irqrestore(&port->port_lock, flags);
+		}
+	}
+#endif
+
+	return chars;
 }
 
 /* undo side effects of setting TTY_THROTTLED */
@@ -1143,7 +1124,6 @@ int __init gserial_setup(struct usb_gadget *g, unsigned count)
 	gs_tty_driver->owner = THIS_MODULE;
 	gs_tty_driver->driver_name = "g_serial";
 	gs_tty_driver->name = PREFIX;
-	gs_tty_driver->major = 127;
 	/* uses dynamically assigned dev_t values */
 
 	gs_tty_driver->type = TTY_DRIVER_TYPE_SERIAL;
@@ -1160,7 +1140,7 @@ int __init gserial_setup(struct usb_gadget *g, unsigned count)
 	gs_tty_driver->init_termios.c_ispeed = 9600;
 	gs_tty_driver->init_termios.c_ospeed = 9600;
 
-	coding.dwDTERate = __constant_cpu_to_le32(9600);
+	coding.dwDTERate = cpu_to_le32(9600);
 	coding.bCharFormat = 8;
 	coding.bParityType = USB_CDC_NO_PARITY;
 	coding.bDataBits = USB_CDC_1_STOP_BITS;
@@ -1181,7 +1161,6 @@ int __init gserial_setup(struct usb_gadget *g, unsigned count)
 	/* export the driver ... */
 	status = tty_register_driver(gs_tty_driver);
 	if (status) {
-		put_tty_driver(gs_tty_driver);
 		pr_err("%s: cannot register, err %d\n",
 				__func__, status);
 		goto fail;
@@ -1262,6 +1241,7 @@ void gserial_cleanup(void)
 	n_ports = 0;
 
 	tty_unregister_driver(gs_tty_driver);
+	put_tty_driver(gs_tty_driver);
 	gs_tty_driver = NULL;
 
 	pr_debug("%s: cleaned up ttyGS* support\n", __func__);

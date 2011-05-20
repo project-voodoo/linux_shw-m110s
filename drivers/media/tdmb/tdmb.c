@@ -54,6 +54,13 @@
 #include "INC_INCLUDES.h"
 #endif
 
+#ifdef CONFIG_HAS_EARLYSUSPEND
+#include <linux/earlysuspend.h>
+struct early_suspend    early_suspend;
+int    OnSleepFlag = 0;
+unsigned long savArg = 0;
+#endif
+
 #define TDMB_DEBUG
 
 #ifdef TDMB_DEBUG
@@ -387,12 +394,12 @@ static int tdmb_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, 
     {
         if ( cmd == IOCTL_TDMB_POWER_OFF )
         {
-            DPRINTK("%d cmd : current state poweroff \r\n", cmd);
+            DPRINTK("0x%x cmd : current state poweroff \r\n", cmd);
             return TRUE;
         }
         else if ( cmd > IOCTL_TDMB_POWER_ON )
         {
-            DPRINTK("error %d cmd : current state poweroff \r\n", cmd);
+            DPRINTK("error 0x%x cmd : current state poweroff \r\n", cmd);
             return FALSE;
         }
     }
@@ -403,6 +410,14 @@ static int tdmb_ioctl(struct inode *inode, struct file *filp, unsigned int cmd, 
             DPRINTK("%d cmd : current state poweron \r\n", cmd);
             return TRUE;
         }
+#ifdef CONFIG_HAS_EARLYSUSPEND        
+        else if((OnSleepFlag)&&( cmd == IOCTL_TDMB_ASSIGN_CH ))
+        {
+            DPRINTK("error 0x%x cmd : current state OnSleep \r\n", cmd);
+            savArg = arg;
+            return FALSE;
+        }
+#endif        
     }
     
 	switch(cmd)
@@ -609,6 +624,54 @@ static struct file_operations tdmb_ctl_fops = {
 	llseek:		no_llseek,
 };
 
+#ifdef CONFIG_HAS_EARLYSUSPEND
+void tdmb_setchannel()
+{
+    INC_CHANNEL_INFO stChInfo;
+    INC_UINT8 reErr;
+
+    DPRINTK("tdmb_setchannel\n");
+    stChInfo.ulRFFreq       = savArg/1000 ;
+    stChInfo.ucSubChID      = savArg%1000;
+    stChInfo.ucServiceType  = 0x0;
+    if (stChInfo.ucSubChID >= 64 )
+    {
+        stChInfo.ucSubChID -= 64;
+        stChInfo.ucServiceType  = 0x18;
+    }
+    if((reErr = INTERFACE_START(T3700_I2C_ID80, &stChInfo)) == INC_SUCCESS)
+    {
+            //TODO Ensemble  good code ....
+    //        ret = TRUE;
+    }
+}
+
+void tdmb_early_suspend(struct early_suspend *h)
+{
+    DPRINTK("Call tdmb_early_suspend! \r\n");
+    OnSleepFlag = 1;
+    savArg = 0;
+	return ;
+}
+void tdmb_late_resume(struct early_suspend *h)
+{
+    DPRINTK("Call tdmb_late_resume! \r\n");
+    
+    if(OnSleepFlag&&savArg)
+    {
+    int temp_ts_size = ts_size;    
+        TDMB_PowerOff();
+        mdelay(10);
+       	TDMB_PowerOn();
+   	ts_size = temp_ts_size;        
+//        tdmb_setchannel();
+    }
+    
+    OnSleepFlag = 0;
+	return ;
+}
+#endif
+
 int tdmb_probe(struct platform_device *pdev)
 {
 	int ret;
@@ -644,6 +707,13 @@ int tdmb_probe(struct platform_device *pdev)
     
 #if TDMB_PRE_MALLOC
     tdmb_makeRingBuffer();
+#endif
+
+#ifdef CONFIG_HAS_EARLYSUSPEND
+	early_suspend.suspend = tdmb_early_suspend;
+	early_suspend.resume = tdmb_late_resume;
+	early_suspend.level = EARLY_SUSPEND_LEVEL_DISABLE_FB - 10;
+	register_early_suspend(&early_suspend);
 #endif
 
 	return 0;

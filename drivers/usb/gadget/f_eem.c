@@ -24,28 +24,9 @@
 #include <linux/device.h>
 #include <linux/etherdevice.h>
 #include <linux/crc32.h>
-#ifdef CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM
-#ifdef CONFIG_PROC_FS
-#include <linux/proc_fs.h>
-#endif
-#include <linux/ip.h>
-#include <linux/udp.h>
-#endif
+#include <linux/slab.h>
 
 #include "u_ether.h"
-
-#define __HOST_DRIVER_BUG_PATCH
-
-//#define USB_EEM_PRINT
-#ifdef USB_PRINT
-#undef USB_PRINT
-#endif
-
-#ifdef USB_EEM_PRINT
-#define USB_PRINT(fmt...) do { printk(KERN_DEBUG fmt); } while(0)
-#else
-#define USB_PRINT(fmt...) do { } while(0)
-#endif
 
 #define EEM_HLEN 2
 
@@ -67,119 +48,6 @@ struct f_eem {
 	struct eem_ep_descs		hs;
 };
 
-int g_eem_ready = 0;
-
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-static struct f_eem *_f_eem;
-
-static u8 hostaddr[ETH_ALEN];
-
-struct _bootp_pkt {		/* BOOTP packet format */
-	struct iphdr iph;	/* IP header */
-	struct udphdr udph;	/* UDP header */
-	u8 op;			/* 1=request, 2=reply */
-	u8 htype;		/* HW address type */
-	u8 hlen;		/* HW address length */
-	u8 hops;		/* Used only by gateways */
-	__be32 xid;		/* Transaction ID */
-	__be16 secs;		/* Seconds since we started */
-	__be16 flags;		/* Just what it says */
-	__be32 client_ip;		/* Client's IP address if known */
-	__be32 your_ip;		/* Assigned IP address */
-	__be32 server_ip;		/* (Next, e.g. NFS) Server's IP address */
-	__be32 relay_ip;		/* IP address of BOOTP relay */
-	u8 hw_addr[16];		/* Client's HW address */
-	u8 serv_name[64];	/* Server host name */
-	u8 boot_file[128];	/* Name of boot file */
-	u8 exten[312];		/* DHCP options / BOOTP vendor extensions */
-};
-
-static u32 your_client_ip;
-static unsigned char client_hw_addr[6];
-
-#if 1 // workaround that pc usb driver drop multicat packet
-static int multicast_to_unicast(struct sk_buff *skb)
-{
-	struct ethhdr *eth;
-	struct iphdr *iph;
-
-	eth = (struct ethhdr *)skb->data;
-	iph = (struct iphdr *)(skb->data + ETH_HLEN);
-
-	if(eth->h_dest[0] == 0x01) // if multicast
-	{
-		if(your_client_ip)
-		{
-			memcpy((void*)eth->h_dest, (void*)client_hw_addr, sizeof(client_hw_addr));
-		}
-	}
-
-  return 0;
-}
-#endif
-
-
-void save_bootp_client_ip(struct sk_buff *skb)
-{
-	struct _bootp_pkt *bootp;
-	u32 bootp_client_ip;
-
-	bootp = (struct _bootp_pkt *)(skb->data + ETH_HLEN);
-
-	if(bootp->iph.protocol == 0x11) // UDP
-	{
-		if(ntohs(bootp->udph.source) == 67) // bootps
-		{
-			if(bootp->op == 2) // boot reply
-			{
-				bootp_client_ip = ntohl(bootp->your_ip);
-
-				if((bootp_client_ip & 0xFFFFFF00) == 0xC0A8C800) // 192.168.200.X
-				{
-					memcpy((void*)client_hw_addr, (void*)bootp->hw_addr, sizeof(client_hw_addr));
-					your_client_ip = bootp_client_ip;
-					printk(KERN_DEBUG "[USB EEM] CLIENT ETH : %02X:%02X:%02X:%02X:%02X:%02X\n",
-							client_hw_addr[0], client_hw_addr[1], client_hw_addr[2],
-							client_hw_addr[3], client_hw_addr[4], client_hw_addr[5]);
-					printk(KERN_DEBUG "[USB EEM] DHCP REPLY IP : %08X\n", your_client_ip);
-			}
-		}
-	}
-	}
-
-	multicast_to_unicast(skb);
-}
-
-#ifdef CONFIG_PROC_FS
-#define EEM_PROC_ENTRY "driver/eem"
-
-static int eem_proc_read(char *page, char **start, off_t off,
-		int count, int *eof, void *data)
-{
-	int len;
-	char *p = page;
-
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
-
-	p += sprintf(p, "%d.%d.%d.%d\n",
-			(your_client_ip >> 24) & 0xFF,
-			(your_client_ip >> 16) & 0xFF,
-			(your_client_ip >> 8) & 0xFF,
-			(your_client_ip) & 0xFF);
-
-	len = (p - page) - off;
-	if (len < 0) {
-		len = 0;
-	}
-	*eof = (len <= count) ? 1 : 0;
-	*start = page + off;
-
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
-	return len;
-}
-#endif
-#endif
-
 static inline struct f_eem *func_to_eem(struct usb_function *f)
 {
 	return container_of(f, struct f_eem, port.func);
@@ -189,8 +57,7 @@ static inline struct f_eem *func_to_eem(struct usb_function *f)
 
 /* interface descriptor: */
 
-//static struct usb_interface_descriptor eem_intf /*__initdata*/ = {
-struct usb_interface_descriptor eem_intf /*__initdata*/ = {
+static struct usb_interface_descriptor eem_intf __initdata = {
 	.bLength =		sizeof eem_intf,
 	.bDescriptorType =	USB_DT_INTERFACE,
 
@@ -204,7 +71,7 @@ struct usb_interface_descriptor eem_intf /*__initdata*/ = {
 
 /* full speed support: */
 
-static struct usb_endpoint_descriptor eem_fs_in_desc /*__initdata*/ = {
+static struct usb_endpoint_descriptor eem_fs_in_desc __initdata = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -212,7 +79,7 @@ static struct usb_endpoint_descriptor eem_fs_in_desc /*__initdata*/ = {
 	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
 };
 
-static struct usb_endpoint_descriptor eem_fs_out_desc /*__initdata*/ = {
+static struct usb_endpoint_descriptor eem_fs_out_desc __initdata = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -220,7 +87,7 @@ static struct usb_endpoint_descriptor eem_fs_out_desc /*__initdata*/ = {
 	.bmAttributes =		USB_ENDPOINT_XFER_BULK,
 };
 
-static struct usb_descriptor_header *eem_fs_function[] /*__initdata*/ = {
+static struct usb_descriptor_header *eem_fs_function[] __initdata = {
 	/* CDC EEM control descriptors */
 	(struct usb_descriptor_header *) &eem_intf,
 	(struct usb_descriptor_header *) &eem_fs_in_desc,
@@ -230,7 +97,7 @@ static struct usb_descriptor_header *eem_fs_function[] /*__initdata*/ = {
 
 /* high speed support: */
 
-static struct usb_endpoint_descriptor eem_hs_in_desc /*__initdata*/ = {
+static struct usb_endpoint_descriptor eem_hs_in_desc __initdata = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -239,7 +106,7 @@ static struct usb_endpoint_descriptor eem_hs_in_desc /*__initdata*/ = {
 	.wMaxPacketSize =	cpu_to_le16(512),
 };
 
-static struct usb_endpoint_descriptor eem_hs_out_desc /*__initdata*/ = {
+static struct usb_endpoint_descriptor eem_hs_out_desc __initdata = {
 	.bLength =		USB_DT_ENDPOINT_SIZE,
 	.bDescriptorType =	USB_DT_ENDPOINT,
 
@@ -248,20 +115,13 @@ static struct usb_endpoint_descriptor eem_hs_out_desc /*__initdata*/ = {
 	.wMaxPacketSize =	cpu_to_le16(512),
 };
 
-static struct usb_descriptor_header *eem_hs_function[] /*__initdata*/ = {
+static struct usb_descriptor_header *eem_hs_function[] __initdata = {
 	/* CDC EEM control descriptors */
 	(struct usb_descriptor_header *) &eem_intf,
 	(struct usb_descriptor_header *) &eem_hs_in_desc,
 	(struct usb_descriptor_header *) &eem_hs_out_desc,
 	NULL,
 };
-
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-/* used when acm function is disabled */
-static struct usb_descriptor_header *null_eem_descs[] = {
-	NULL,
-};
-#endif
 
 /* string descriptors: */
 
@@ -290,14 +150,11 @@ static int eem_setup(struct usb_function *f, const struct usb_ctrlrequest *ctrl)
 	u16			w_value = le16_to_cpu(ctrl->wValue);
 	u16			w_length = le16_to_cpu(ctrl->wLength);
 
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
-
-	USB_PRINT( "invalid control req%02x.%02x v%04x i%04x l%d\n",
+	DBG(cdev, "invalid control req%02x.%02x v%04x i%04x l%d\n",
 		ctrl->bRequestType, ctrl->bRequest,
 		w_value, w_index, w_length);
 
 	/* device either stalls (value < 0) or reports success */
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
 	return value;
 }
 
@@ -308,8 +165,6 @@ static int eem_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	struct usb_composite_dev *cdev = f->config->cdev;
 	struct net_device	*net;
 
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
-
 	/* we know alt == 0, so this is an activation or a reset */
 	if (alt != 0)
 		goto fail;
@@ -317,12 +172,12 @@ static int eem_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 	if (intf == eem->ctrl_id) {
 
 		if (eem->port.in_ep->driver_data) {
-			USB_PRINT( "reset eem\n");
+			DBG(cdev, "reset eem\n");
 			gether_disconnect(&eem->port);
 		}
 
 		if (!eem->port.in) {
-			USB_PRINT( "init eem\n");
+			DBG(cdev, "init eem\n");
 			eem->port.in = ep_choose(cdev->gadget,
 					eem->hs.in, eem->fs.in);
 			eem->port.out = ep_choose(cdev->gadget,
@@ -334,18 +189,12 @@ static int eem_set_alt(struct usb_function *f, unsigned intf, unsigned alt)
 		 */
 		eem->port.is_zlp_ok = 1;
 		eem->port.cdc_filter = DEFAULT_FILTER;
-		USB_PRINT( "activate eem\n");
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-		net = geem_connect(&eem->port);
-#else
+		DBG(cdev, "activate eem\n");
 		net = gether_connect(&eem->port);
-#endif
-
 		if (IS_ERR(net))
 			return PTR_ERR(net);
 	} else
 		goto fail;
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
 
 	return 0;
 fail:
@@ -357,14 +206,10 @@ static void eem_disable(struct usb_function *f)
 	struct f_eem		*eem = func_to_eem(f);
 	struct usb_composite_dev *cdev = f->config->cdev;
 
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
-	USB_PRINT( "eem deactivated\n");
+	DBG(cdev, "eem deactivated\n");
 
 	if (eem->port.in_ep->driver_data)
 		gether_disconnect(&eem->port);
-	g_eem_ready = 0;
-
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -378,8 +223,6 @@ eem_bind(struct usb_configuration *c, struct usb_function *f)
 	struct f_eem		*eem = func_to_eem(f);
 	int			status;
 	struct usb_ep		*ep;
-
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
 
 	/* allocate instance-specific interface IDs */
 	status = usb_interface_id(c, f);
@@ -436,17 +279,9 @@ eem_bind(struct usb_configuration *c, struct usb_function *f)
 				f->hs_descriptors, &eem_hs_out_desc);
 	}
 
-	USB_PRINT( "CDC Ethernet (EEM): %s speed IN/%s OUT/%s\n",
+	DBG(cdev, "CDC Ethernet (EEM): %s speed IN/%s OUT/%s\n",
 			gadget_is_dualspeed(c->cdev->gadget) ? "dual" : "full",
 			eem->port.in_ep->name, eem->port.out_ep->name);
-
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-
-#ifdef CONFIG_PROC_FS
-	(void)create_proc_read_entry(EEM_PROC_ENTRY, S_IRUGO, NULL, eem_proc_read, NULL);
-#endif
-#endif
-
 	return 0;
 
 fail:
@@ -461,7 +296,6 @@ fail:
 
 	ERROR(cdev, "%s: can't bind, err %d\n", f->name, status);
 
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
 	return status;
 }
 
@@ -470,18 +304,12 @@ eem_unbind(struct usb_configuration *c, struct usb_function *f)
 {
 	struct f_eem	*eem = func_to_eem(f);
 
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
+	DBG(c->cdev, "eem unbind\n");
 
 	if (gadget_is_dualspeed(c->cdev->gadget))
 		usb_free_descriptors(f->hs_descriptors);
 	usb_free_descriptors(f->descriptors);
 	kfree(eem);
-
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-	gether_disconnect(&eem->port);
-	geem_cleanup();
-#endif
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
 }
 
 static void eem_cmd_complete(struct usb_ep *ep, struct usb_request *req)
@@ -500,18 +328,6 @@ static struct sk_buff *eem_wrap(struct gether *port, struct sk_buff *skb)
 	int		padlen = 0;
 	u16		len = skb->len;
 
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
-
-#ifdef CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM
-	save_bootp_client_ip(skb);
-#endif
-
-	if(g_eem_ready == 0)
-	{
-		printk(KERN_DEBUG "drop tx\n");
-		return NULL;
-	}
-	
 	if (!skb_cloned(skb)) {
 		int headroom = skb_headroom(skb);
 		int tailroom = skb_tailroom(skb);
@@ -543,17 +359,12 @@ done:
 	 * b15:		bmType (0 == data)
 	 */
 	len = skb->len;
-#if 0 // fixed bug
-	put_unaligned_le16((len & 0x3FFF) | BIT(14), skb_push(skb, 2));
-#else
-	put_unaligned_le16((len & 0x3FFF), skb_push(skb, 2));
-#endif
+	put_unaligned_le16(len & 0x3FFF, skb_push(skb, 2));
 
 	/* add a zero-length EEM packet, if needed */
 	if (padlen)
 		put_unaligned_le16(0, skb_put(skb, 2));
 
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
 	return skb;
 }
 
@@ -567,15 +378,6 @@ static int eem_unwrap(struct gether *port,
 {
 	struct usb_composite_dev	*cdev = port->func.config->cdev;
 	int				status = 0;
-	bool	is_maxpacket;	
-
-	struct usb_ep	*out = port->out_ep;
-
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
-
-	g_eem_ready = 1;
-
-//	printk(KERN_DEBUG "eem_unwrap(..) skb->len=%d skb->data[0]=0x%x,[1]=0x%x\n",skb->len,skb->data[0],skb->data[1]);
 
 	do {
 		struct sk_buff	*skb2;
@@ -584,20 +386,13 @@ static int eem_unwrap(struct gether *port,
 
 		if (skb->len < EEM_HLEN) {
 			status = -EINVAL;
-			USB_PRINT( "invalid EEM header\n");
+			DBG(cdev, "invalid EEM header\n");
 			goto error;
 		}
 
 		/* remove the EEM header */
-#if 1	
 		header = get_unaligned_le16(skb->data);
 		skb_pull(skb, EEM_HLEN);
-#else	// NET_IP_ALIGN issue of socket buffer
-		header = get_unaligned_le16((skb->data-2));
-		skb->len -= 2;
-#endif
-
-		is_maxpacket = false;
 
 		/* EEM packet header format:
 		 * b0..14:	EEM type dependent (data or command)
@@ -627,7 +422,7 @@ static int eem_unwrap(struct gether *port,
 
 				skb2 = skb_clone(skb, GFP_ATOMIC);
 				if (unlikely(!skb2)) {
-					USB_PRINT( "EEM echo response error\n");
+					DBG(cdev, "EEM echo response error\n");
 					goto next;
 				}
 				skb_trim(skb2, len);
@@ -638,7 +433,7 @@ static int eem_unwrap(struct gether *port,
 				req->complete = eem_cmd_complete;
 				req->zero = 1;
 				if (usb_ep_queue(port->in_ep, req, GFP_ATOMIC))
-					USB_PRINT( "echo response queue fail\n");
+					DBG(cdev, "echo response queue fail\n");
 				break;
 
 			case 1:  /* echo response */
@@ -668,54 +463,28 @@ static int eem_unwrap(struct gether *port,
 				status = -EINVAL;
 				goto error;
 			}
-#if 0	// NET_IP_ALIGN issue of socket buffer
-			if(((skb->len % out->maxpacket) == 0) &&
-				   	(skb->len == (len + 2)))
-				is_maxpacket = true;
-#endif
 
 			/* validate CRC */
-			crc = get_unaligned_le32(skb->data + len - ETH_FCS_LEN);
-#ifndef __HOST_DRIVER_BUG_PATCH
 			if (header & BIT(14)) {
-#endif
 				crc = get_unaligned_le32(skb->data + len
 							- ETH_FCS_LEN);
-#ifdef __HOST_DRIVER_BUG_PATCH
-#if 0	// NET_IP_ALIGN issue of socket buffer
-				if(is_maxpacket)
-				{
-					crc2 = ~crc32_le(~0,
-						skb->data,
-						skb->len - 2 - ETH_FCS_LEN);
-				}
-				else
-#endif
-#endif
-				{
 				crc2 = ~crc32_le(~0,
-						skb->data,
-						skb->len - ETH_FCS_LEN);
-				}
-#ifndef __HOST_DRIVER_BUG_PATCH
+						skb->data, len - ETH_FCS_LEN);
 			} else {
-				crc = 0xdeadbeef;
 				crc = get_unaligned_be32(skb->data + len
 							- ETH_FCS_LEN);
 				crc2 = 0xdeadbeef;
 			}
-#endif
 			if (crc != crc2) {
-				USB_PRINT( "invalid EEM CRC\n");
+				DBG(cdev, "invalid EEM CRC\n");
 				goto next;
 			}
 
 			skb2 = skb_clone(skb, GFP_ATOMIC);
 			if (unlikely(!skb2)) {
-				USB_PRINT( "unable to unframe EEM packet\n");
+				DBG(cdev, "unable to unframe EEM packet\n");
 				continue;
 			}
-
 			skb_trim(skb2, len - ETH_FCS_LEN);
 
 			skb3 = skb_copy_expand(skb2,
@@ -723,7 +492,7 @@ static int eem_unwrap(struct gether *port,
 						0,
 						GFP_ATOMIC);
 			if (unlikely(!skb3)) {
-				USB_PRINT( "unable to realign EEM packet\n");
+				DBG(cdev, "unable to realign EEM packet\n");
 				dev_kfree_skb_any(skb2);
 				continue;
 			}
@@ -731,24 +500,11 @@ static int eem_unwrap(struct gether *port,
 			skb_queue_tail(list, skb3);
 		}
 next:
-
-#ifdef __HOST_DRIVER_BUG_PATCH
-#if 0	// NET_IP_ALIGN issue of socket buffer
-		if(is_maxpacket)
-			skb_pull(skb, len + 2);
-		else
-#endif
-			skb_pull(skb, len);
-#else
 		skb_pull(skb, len);
-#endif
-
 	} while (skb->len);
 
 error:
 	dev_kfree_skb_any(skb);
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
-
 	return status;
 }
 
@@ -766,8 +522,6 @@ int __init eem_bind_config(struct usb_configuration *c)
 {
 	struct f_eem	*eem;
 	int		status;
-
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
 
 	/* maybe allocate device-global string IDs */
 	if (eem_string_defs[0].id == 0) {
@@ -790,10 +544,6 @@ int __init eem_bind_config(struct usb_configuration *c)
 	eem->port.func.name = "cdc_eem";
 	eem->port.func.strings = eem_strings;
 	/* descriptors are per-instance copies */
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-	eem->port.func.descriptors = eem_fs_function;
-	eem->port.func.hs_descriptors = eem_hs_function;
-#endif
 	eem->port.func.bind = eem_bind;
 	eem->port.func.unbind = eem_unbind;
 	eem->port.func.set_alt = eem_set_alt;
@@ -803,95 +553,9 @@ int __init eem_bind_config(struct usb_configuration *c)
 	eem->port.unwrap = eem_unwrap;
 	eem->port.header_len = EEM_HLEN;
 
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-	_f_eem = eem;
-#endif
-
 	status = usb_add_function(c, &eem->port.func);
 	if (status)
 		kfree(eem);
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
 	return status;
 }
 
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-
-
-int __init eem_function_add(struct usb_composite_dev *cdev,
-	struct usb_configuration *c)
-{
-	int status;
-
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
-
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-	/* set up network link layer */
-	status = geem_setup(c->cdev->gadget, hostaddr);
-#else
-	/* set up network link layer */
-	status = gether_setup(c->cdev->gadget, hostaddr);
-#endif
-	if (status < 0)
-	{
-		printk(KERN_DEBUG "[%s] Fail to gether_setup() ret:%d\n", __func__, status);	
-		return status;
-	}
-
-	status = eem_bind_config(c);
-	if (status) {
-		printk(KERN_DEBUG "[%s] Fail to eem_bind_config()\n", __func__);
-#if defined(CONFIG_USB_ANDROID_ADB_UMS_ACM_EEM)
-		geem_cleanup();
-#else
-		gether_cleanup();
-#endif
-	}
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
-
-	return status;
-}
-
-int eem_function_config_changed(struct usb_composite_dev *cdev,
-	struct usb_configuration *c)
-{
-	struct f_eem *eem = _f_eem;	
-	int ret, status;
-//	int 		id;
-//	struct usb_request *req;
-
-	USB_PRINT("[USB:EEM] %s ++\n", __func__);
-	printk(KERN_DEBUG "eem_function_config_changed\n");
-
-	eem->port.func.descriptors = eem_fs_function;
-	eem->port.func.hs_descriptors = eem_hs_function;
-	eem->port.func.bind = NULL;
-
-	ret = usb_add_function(c, &eem->port.func);
-	if (ret)
-		printk(KERN_DEBUG "usb_add_function failed\n");
-
-	/* allocate instance-specific interface IDs */
-	status = usb_interface_id(c, &eem->port.func);
-	if (status < 0)
-		goto fail;
-	eem->ctrl_id = status;
-	eem_intf.bInterfaceNumber = status;
-
-	return 0;
-
-fail:
-
-	/* we might as well release our claims on endpoints */
-	if (eem->port.out)
-		eem->port.out_ep->driver_data = NULL;
-	if (eem->port.in)
-		eem->port.in_ep->driver_data = NULL;
-
-	ERROR(cdev, "%s: can't bind, err %d\n", eem->port.func.name, status);
-
-	USB_PRINT("[USB:EEM] %s --\n", __func__);
-	return status;
-}
-
-
-#endif

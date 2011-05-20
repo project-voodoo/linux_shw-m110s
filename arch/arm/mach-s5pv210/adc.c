@@ -50,100 +50,96 @@
 #include <linux/miscdevice.h>
 #include <linux/clk.h>
 #include <linux/mutex.h>
-#include <linux/wakelock.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
 
 #include <asm/irq.h>
 #include <mach/hardware.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 
 #include <mach/regs-adc.h>
 #include <mach/adc.h>
 #include <mach/irqs.h>
 
-#define ADC_MINOR 	131
-#define ADC_INPUT_PIN   _IOW('S', 0x0c, unsigned long)
+#define ADC_MINOR	131
+#define ADC_INPUT_PIN	_IOW('S', 0x0c, unsigned long)
 
-#define ADC_MAX_LOOP	5000
-
-#ifdef ADC_WITH_TOUCHSCREEN
-#undef ADC_WITH_TOUCHSCREEN
-#endif
+#define ADC_WITH_TOUCHSCREEN
 
 static struct clk	*adc_clock;
 
-static void __iomem 	*base_addr;
-static int adc_port =  0;
+static void __iomem	*base_addr;
+static int adc_port;
 struct s3c_adc_mach_info *plat_data;
-static unsigned int adccon, adcdly;
 
+#ifdef ADC_WITH_TOUCHSCREEN
 static DEFINE_MUTEX(adc_mutex);
 
-static struct wake_lock adc_wake_lock;
+static unsigned long data_for_ADCCON;
+
+static void s3c_adc_save_SFR_on_ADC(void)
+{
+	data_for_ADCCON = readl(base_addr + S3C_ADCCON);
+}
+
+static void s3c_adc_restore_SFR_on_ADC(void)
+{
+	writel(data_for_ADCCON, base_addr + S3C_ADCCON);
+}
+#else
+static struct resource	*adc_mem;
+#endif
 
 static int s3c_adc_open(struct inode *inode, struct file *file)
 {
 	return 0;
 }
 
-unsigned int s3c_adc_convert(void)
+static unsigned int s3c_adc_convert(void)
 {
 	unsigned int adc_return = 0;
-	unsigned int adc_loop;
 	unsigned long data0;
 	unsigned long data1;
 
-	wake_lock(&adc_wake_lock);
-	mutex_lock(&adc_mutex);
-	clk_enable(adc_clock);
-
-	adc_loop = 0;
-	
-	writel((readl(base_addr + S3C_ADCCON) | S3C_ADCCON_PRSCEN) & (~S3C_ADCCON_STDBM),base_addr + S3C_ADCCON);
+	writel((readl(base_addr + S3C_ADCCON) | S3C_ADCCON_PRSCEN) & ~S3C_ADCCON_STDBM,
+		base_addr + S3C_ADCCON);
 
 	writel((adc_port & 0xF), base_addr + S3C_ADCMUX);
 
-    if(adc_port == 3)
-    {
-    	udelay(100);
-    }else
-    {
-		udelay(10);
-    }
+	udelay(10);
 
-	writel(readl(base_addr + S3C_ADCCON) | S3C_ADCCON_ENABLE_START, base_addr + S3C_ADCCON);
+	writel(readl(base_addr + S3C_ADCCON) | S3C_ADCCON_ENABLE_START,
+		base_addr + S3C_ADCCON);
 
 	do {
 		data0 = readl(base_addr + S3C_ADCCON);
-		adc_loop++;
-		if(adc_loop > ADC_MAX_LOOP)
-		{
-			printk("adc max loop error \n");
-			break;
-		}
 	} while (!(data0 & S3C_ADCCON_ECFLG));
 
 	data1 = readl(base_addr + S3C_ADCDAT0);
+
+	writel((readl(base_addr + S3C_ADCCON) | S3C_ADCCON_STDBM) & ~S3C_ADCCON_PRSCEN,
+		base_addr + S3C_ADCCON);
 
 	if (plat_data->resolution == 12)
 		adc_return = data1 & S3C_ADCDAT0_XPDATA_MASK_12BIT;
 	else
 		adc_return = data1 & S3C_ADCDAT0_XPDATA_MASK;
 
-	writel((readl(base_addr + S3C_ADCCON) | S3C_ADCCON_STDBM) & (~S3C_ADCCON_PRSCEN),base_addr + S3C_ADCCON);
-
-	clk_disable(adc_clock);
-	mutex_unlock(&adc_mutex);
-	wake_unlock(&adc_wake_lock);
-	
 	return adc_return;
 }
 
+
 int s3c_adc_get_adc_data(int channel)
-{	
+{
 	int adc_value = 0;
 	int cur_adc_port = 0;
+
+#ifdef ADC_WITH_TOUCHSCREEN
+	mutex_lock(&adc_mutex);
+	s3c_adc_save_SFR_on_ADC();
+#else
+	mutex_lock(&adc_mutex);
+#endif
 
 	cur_adc_port = adc_port;
 	adc_port = channel;
@@ -152,13 +148,18 @@ int s3c_adc_get_adc_data(int channel)
 
 	adc_port = cur_adc_port;
 
-	//printk("%s : Converted %d Value: %03d\n", __FUNCTION__, channel,adc_value);
+#ifdef ADC_WITH_TOUCHSCREEN
+	s3c_adc_restore_SFR_on_ADC();
+	mutex_unlock(&adc_mutex);
+#else
+	mutex_unlock(&adc_mutex);
+#endif
+
+	pr_debug("%s : Converted Value: %03d\n", __func__, adc_value);
 
 	return adc_value;
 }
-
 EXPORT_SYMBOL(s3c_adc_get_adc_data);
-
 
 int s3c_adc_get(struct s3c_adc_request *req)
 {
@@ -179,11 +180,21 @@ s3c_adc_read(struct file *file, char __user *buffer,
 {
 	int  adc_value = 0;
 
+#ifdef ADC_WITH_TOUCHSCREEN
+	mutex_lock(&adc_mutex);
+	s3c_adc_save_SFR_on_ADC();
+#endif
+	printk(KERN_INFO "## delay: %d\n", readl(base_addr + S3C_ADCDLY));
 	adc_value = s3c_adc_convert();
 
-	if (copy_to_user(buffer, &adc_value, sizeof(unsigned int))) {
+#ifdef ADC_WITH_TOUCHSCREEN
+	s3c_adc_restore_SFR_on_ADC();
+	mutex_unlock(&adc_mutex);
+#endif
+
+	if (copy_to_user(buffer, &adc_value, sizeof(unsigned int)))
 		return -EFAULT;
-	}
+
 	return sizeof(unsigned int);
 }
 
@@ -197,7 +208,9 @@ static int s3c_adc_ioctl(struct inode *inode, struct file *file,
 		adc_port = (unsigned int) arg;
 
 		if (adc_port >= 4)
-			printk(" %d is already reserved for TouchScreen\n", adc_port);
+			printk(KERN_WARNING
+				" %d is already reserved for TouchScreen\n",
+				adc_port);
 		return 0;
 
 	default:
@@ -221,18 +234,16 @@ static struct miscdevice s3c_adc_miscdev = {
 static struct s3c_adc_mach_info *s3c_adc_get_platdata(struct device *dev)
 {
 	if (dev->platform_data != NULL)
-	{
 		return (struct s3c_adc_mach_info *) dev->platform_data;
-	} else {
+	else
 		return 0;
-	}
 }
 
 /*
  * The functions for inserting/removing us as a module.
  */
 
-static int __init s3c_adc_probe(struct platform_device *pdev)
+static int __devinit s3c_adc_probe(struct platform_device *pdev)
 {
 	struct resource	*res;
 	struct device *dev;
@@ -248,6 +259,15 @@ static int __init s3c_adc_probe(struct platform_device *pdev)
 	}
 
 	size = (res->end - res->start) + 1;
+
+#if !defined(ADC_WITH_TOUCHSCREEN)
+	adc_mem = request_mem_region(res->start, size, pdev->name);
+	if (adc_mem == NULL) {
+		dev_err(dev, "failed to get memory region\n");
+		ret = -ENOENT;
+		goto err_req;
+	}
+#endif
 
 	base_addr = ioremap(res->start, size);
 	if (base_addr ==  NULL) {
@@ -270,23 +290,22 @@ static int __init s3c_adc_probe(struct platform_device *pdev)
 	plat_data = s3c_adc_get_platdata(&pdev->dev);
 
 	if ((plat_data->presc & 0xff) > 0)
-		writel(S3C_ADCCON_STDBM | S3C_ADCCON_PRSCVL(plat_data->presc & 0xff), base_addr + S3C_ADCCON);
+		writel(S3C_ADCCON_PRSCEN |
+		       S3C_ADCCON_PRSCVL(plat_data->presc & 0xff),
+		       base_addr + S3C_ADCCON);
 	else
 		writel(0, base_addr + S3C_ADCCON);
 
 	/* Initialise registers */
-	if ((plat_data->delay & 0xffff) > 0){
+	if ((plat_data->delay & 0xffff) > 0)
 		writel(plat_data->delay & 0xffff, base_addr + S3C_ADCDLY);
-	}
 
 	if (plat_data->resolution == 12)
-		writel(readl(base_addr + S3C_ADCCON) | S3C_ADCCON_RESSEL_12BIT, base_addr + S3C_ADCCON);
+		writel(readl(base_addr + S3C_ADCCON) |
+		       S3C_ADCCON_RESSEL_12BIT, base_addr + S3C_ADCCON);
 
-	//esper, we save this settings for wake restore
-	adccon = readl(base_addr + S3C_ADCCON);
-	adcdly = readl(base_addr + S3C_ADCDLY);	
-
-	clk_disable(adc_clock);
+	writel((readl(base_addr + S3C_ADCCON) | S3C_ADCCON_STDBM) & ~S3C_ADCCON_PRSCEN,
+		base_addr + S3C_ADCCON);
 
 	ret = misc_register(&s3c_adc_miscdev);
 	if (ret) {
@@ -294,8 +313,6 @@ static int __init s3c_adc_probe(struct platform_device *pdev)
 			ADC_MINOR, ret);
 		goto err_clk;
 	}
-
-	wake_lock_init(&adc_wake_lock, WAKE_LOCK_SUSPEND, "adc_wake_lock");
 
 	return 0;
 
@@ -306,35 +323,39 @@ err_clk:
 err_map:
 	iounmap(base_addr);
 
+#if !defined(ADC_WITH_TOUCHSCREEN)
+err_req:
+	release_resource(adc_mem);
+	kfree(adc_mem);
+#endif
+
 	return ret;
 }
 
 
 static int s3c_adc_remove(struct platform_device *dev)
 {
+	clk_disable(adc_clock);
+	clk_put(adc_clock);
 	return 0;
 }
 
 #ifdef CONFIG_PM
+static unsigned int adccon, adcdly;
+
 static int s3c_adc_suspend(struct platform_device *dev, pm_message_t state)
 {
-	clk_enable(adc_clock);
+	adccon = readl(base_addr + S3C_ADCCON);
+	adcdly = readl(base_addr + S3C_ADCDLY);
 
 	return 0;
 }
 
 static int s3c_adc_resume(struct platform_device *pdev)
 {
-	wake_lock(&adc_wake_lock);
-	mutex_lock(&adc_mutex);
-	clk_enable(adc_clock);
-
 	writel(adccon, base_addr + S3C_ADCCON);
 	writel(adcdly, base_addr + S3C_ADCDLY);
 
-	clk_disable(adc_clock);
-	mutex_unlock(&adc_mutex);
-	wake_unlock(&adc_wake_lock);
 	return 0;
 }
 #else
@@ -353,7 +374,8 @@ static struct platform_driver s3c_adc_driver = {
 	},
 };
 
-static char banner[] __initdata = KERN_INFO "S5PV210 ADC driver, (c) 2010 Samsung Electronics\n";
+static char banner[] __initdata = KERN_INFO \
+	"S5PV210 ADC driver, (c) 2010 Samsung Electronics\n";
 
 int __init s3c_adc_init(void)
 {
