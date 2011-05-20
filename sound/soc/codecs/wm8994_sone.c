@@ -21,6 +21,10 @@
 #include <mach/gpio-aries.h>
 #include "wm8994_samsung.h"
 
+#ifdef CONFIG_SND_VOODOO
+#include "wm8994_voodoo.h"
+#endif
+
 #define SUBJECT "wm8994_sone.c"
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -1187,6 +1191,10 @@ void wm8994_record_main_mic(struct snd_soc_codec *codec)
 		val |= (WM8994_ADC1L_TO_AIF1ADC1L);
 		wm8994_write(codec, WM8994_AIF1_ADC1_LEFT_MIXER_ROUTING, val);
 	}
+
+#ifdef CONFIG_SND_VOODOO_RECORD_PRESETS
+	voodoo_hook_record_main_mic();
+#endif
 
 	printk(SND_KERN_DEBUG "[WM8994] wm8994_record_main_mic(%#x)\n", wm8994->codec_state);
 }
